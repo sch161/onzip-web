@@ -78,7 +78,7 @@ export default function Signup() {
             상경 청년을 위한 안심 주거 파트너
           </div>
           <h1 className="text-balance text-[38px] font-extrabold leading-[1.2] tracking-tight text-text-dark">
-            ZIPUP과 함께
+            ONZIP과 함께
             <br />
             안심하고 시작해요
           </h1>

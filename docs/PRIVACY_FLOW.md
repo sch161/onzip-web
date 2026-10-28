@@ -302,7 +302,7 @@
 
 1. **`landlordName`이 브라우저 `sessionStorage`에 평문 저장됨. → 수정 완료.**
    기존 문제: `navState`(Gemini 응답 + 주입된 `landlordName`)를 통째로
-   `sessionStorage.setItem('zipup:lastAnalysis', JSON.stringify(navState))`로 저장하고 있었다.
+   `sessionStorage.setItem('onzip:lastAnalysis', JSON.stringify(navState))`로 저장하고 있었다.
    탭을 닫으면 사라지고 서버로 다시 전송되진 않지만, 탭이 열려 있는 동안은 같은 오리진의 다른
    스크립트(XSS 발생 시)나 공용 PC의 다음 사용자가 개발자도구(Application → Session Storage)로
    그대로 열람할 수 있었다.
@@ -332,7 +332,7 @@
 
 3. **계정을 전환해도 앞사람의 분석 결과·상담 내용이 `sessionStorage`에 남아 다음 사용자에게 노출됨.
    → 수정 완료(`src/lib/sessionCleanup.ts` 추가).**
-   기존 문제: 계약서 분석 결과(`zipup:lastAnalysis`)와 마음 상담 대화(`zipup:psychGuardMessages`)는
+   기존 문제: 계약서 분석 결과(`onzip:lastAnalysis`)와 마음 상담 대화(`onzip:psychGuardMessages`)는
    `sessionStorage`에 저장되는데, `sessionStorage`는 로그인 상태와 무관하게 **탭이 살아있는 동안
    계속 유지**된다. 같은 탭에서 A가 로그아웃하고 B가 로그인하면, B의 화면(혹은 개발자도구)에 A가
    방금 분석한 계약서 위험 조항·매물 주소·보증금이나 A가 붙여넣은 문자/카톡 상담 내용이 그대로
@@ -340,8 +340,8 @@
    로그인 없이 분석해 둔 내용을 뒷사람이 그대로 보는 경로였다.
    조치: `src/lib/sessionCleanup.ts`의 `registerSessionCleanup()`을 `src/main.tsx`에서 앱 렌더링
    전에 한 번 등록해, `supabase.auth.onAuthStateChange`로 로그인 세션의 소유자(사용자 id, 비로그인은
-   `'anon'`)가 바뀔 때마다 `zipup:lastAnalysis`/`zipup:psychGuardMessages`를 지운다. 소유자를
-   `sessionStorage`의 `zipup:sessionOwner` 키에 함께 기록해 "바뀐 경우"만 판별하므로, 같은 사용자의
+   `'anon'`)가 바뀔 때마다 `onzip:lastAnalysis`/`onzip:psychGuardMessages`를 지운다. 소유자를
+   `sessionStorage`의 `onzip:sessionOwner` 키에 함께 기록해 "바뀐 경우"만 판별하므로, 같은 사용자의
    새로고침이나 토큰 자동 갱신으로는 보고 있던 결과가 사라지지 않는다. Supabase Auth 자체 세션은
    `localStorage`에 별도로 저장되고 `signOut()`이 알아서 정리하므로 이 정리 대상에는 포함하지
    않았다.

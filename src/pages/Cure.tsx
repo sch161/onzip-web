@@ -142,7 +142,7 @@ function AnalysisPanel({ analysis }: { analysis: ChatAnalysisResult }) {
 }
 
 export default function Cure() {
-  const [messages, setMessages] = useSessionState<ChatMessage[]>("zipup:psychGuardMessages", []);
+  const [messages, setMessages] = useSessionState<ChatMessage[]>("onzip:psychGuardMessages", []);
   const [input, setInput] = useState("");
   const [image, setImage] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);

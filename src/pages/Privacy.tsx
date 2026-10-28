@@ -41,7 +41,7 @@ export default function Privacy() {
         <Card className="mt-4 border-warning/40 bg-warning-bg/40 lg:mt-6">
           <p className="text-xs font-bold text-text-dark">⚠️ 안내</p>
           <p className="mt-1 text-[11px] leading-relaxed text-text-gray">
-            <BrokenText text="이 문서는 ZIPUP 서비스 이해를 돕기 위한 참고용 템플릿이며, 변호사 등 전문가의 법률 자문을 대체하지 않습니다. 실제 서비스 운영 및 개인정보보호법 등 관계 법령 준수를 위해서는 반드시 법률 전문가의 검토를 받아 확정해주세요." />
+            <BrokenText text="이 문서는 ONZIP 서비스 이해를 돕기 위한 참고용 템플릿이며, 변호사 등 전문가의 법률 자문을 대체하지 않습니다. 실제 서비스 운영 및 개인정보보호법 등 관계 법령 준수를 위해서는 반드시 법률 전문가의 검토를 받아 확정해주세요." />
           </p>
         </Card>
 

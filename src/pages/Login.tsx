@@ -74,7 +74,7 @@ export default function Login() {
               🏠
             </div>
             <h2 className="text-[34px] font-bold text-primary lg:text-xl lg:font-extrabold lg:text-text-dark">
-              <span className="lg:hidden">ZIPUP</span>
+              <span className="lg:hidden">ONZIP</span>
               <span className="hidden lg:inline">로그인</span>
             </h2>
             <p className="mt-2 text-balance text-center text-sm text-text-gray lg:hidden">

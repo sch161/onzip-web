@@ -17,7 +17,7 @@ export interface LawSearchResponse {
   results: RawLawSearchResult[]
 }
 
-const CACHE_KEY = 'zipup:lawSearchCache'
+const CACHE_KEY = 'onzip:lawSearchCache'
 
 function readCache(): Record<string, LawSearchResponse> {
   try {

@@ -9,7 +9,7 @@ import TopNav from '../components/TopNav'
 import type { AnalysisResult, RiskLevel } from '../lib/analyzeContract'
 import { fetchLegalTerms } from '../lib/legalTerms'
 
-const LAST_ANALYSIS_KEY = 'zipup:lastAnalysis'
+const LAST_ANALYSIS_KEY = 'onzip:lastAnalysis'
 
 function readLastAnalysis(): AnalysisResult | undefined {
   try {

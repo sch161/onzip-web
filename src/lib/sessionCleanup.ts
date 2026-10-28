@@ -4,11 +4,11 @@ import { supabase } from './supabase'
  * 사람이 바뀌면 남아 있으면 안 된다 — 계약서 분석 결과에는 매물 주소·보증금·위험 조항이,
  * 마음 상담 기록에는 사용자가 붙여넣은 문자/카톡 내용이 들어 있다.
  * (Supabase Auth 자체 세션은 localStorage에 따로 저장되며 signOut이 알아서 지우므로 여기 없다.) */
-const APP_SESSION_KEYS = ['zipup:lastAnalysis', 'zipup:psychGuardMessages']
+const APP_SESSION_KEYS = ['onzip:lastAnalysis', 'onzip:psychGuardMessages']
 
 /** 현재 sessionStorage에 담긴 데이터가 "누구 것인지" 표시해 두는 키. 로그인 사용자 id를 넣고,
  * 비로그인 상태면 'anon'을 넣는다. */
-const SESSION_OWNER_KEY = 'zipup:sessionOwner'
+const SESSION_OWNER_KEY = 'onzip:sessionOwner'
 
 function clearAppSessionData() {
   for (const key of APP_SESSION_KEYS) {

@@ -19,7 +19,7 @@ import { supabase } from "../lib/supabase";
 
 type Tab = "contract" | "gaslighting";
 
-const SUPPORT_EMAIL = "support@zipup.com";
+const SUPPORT_EMAIL = "s2534@e-mirim.hs.kr";
 
 const CONTRACT_LABEL = {
   danger: "위험",
