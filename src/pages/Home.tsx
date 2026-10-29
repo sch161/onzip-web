@@ -22,14 +22,17 @@ function formatNewsDate(value: string): string {
 
 const TRUST_FACTS = [
   {
+    icon: "sparkles",
     title: "Google Gemini AI 분석",
     body: "실제 AI 모델이 계약서 조항을 직접 읽고 위험 요소를 짚어드려요.",
   },
   {
+    icon: "shield-check",
     title: "HUG 공식 데이터 대조",
     body: "주택도시보증공사 상습 채무불이행자 명단과 임대인 정보를 대조해요.",
   },
   {
+    icon: "chart-no-axes-combined",
     title: "국토교통부 실거래가 기반",
     body: "공식 실거래가 통계로 지역별 전세가율과 위험도를 계산해요.",
   },
@@ -43,17 +46,17 @@ const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
 
 const FEATURES = [
   {
-    icon: "✓",
+    icon: "file-search",
     title: "계약서 위험 조항 탐지",
     body: "보증금 미반환, 불리한 특약, 등기부 위험까지 조항 단위로 짚어드려요.",
   },
   {
-    icon: "◈",
+    icon: "map-pin-house",
     title: "지역별 주거 위험도",
     body: "전세가율, 사고 이력, 시세 흐름을 지도 위에서 한눈에 비교하세요.",
   },
   {
-    icon: "♡",
+    icon: "heart-handshake",
     title: "마음까지 돌보는 상담",
     body: "낯선 도시살이의 불안, AI 상담 도우미와 편하게 이야기 나눠요.",
   },
@@ -202,8 +205,8 @@ export default function Home() {
           <div className="mt-8 flex flex-col gap-3">
             {TRUST_FACTS.map((fact) => (
               <div key={fact.title} className="flex items-start gap-2.5">
-                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary-bg text-[11px] font-bold text-primary">
-                  ✓
+                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center text-primary">
+                  <span className="flex h-5 w-5 items-center justify-center"><img src={`/icons/home/${fact.icon}.svg`} alt="" aria-hidden="true" className="max-w-none scale-125" /></span>
                 </span>
                 <p className="text-[13.5px] leading-relaxed text-text-gray">
                   <span className="font-bold text-text-dark">{fact.title}</span>
@@ -217,7 +220,7 @@ export default function Home() {
 
         <Card className="flex flex-col gap-4 lg:p-[30px]">
           <div>
-            <p className="mt-1 text-xs leading-relaxed text-text-gray lg:text-[13.5px]">
+            <p className="mt-1 text-[11px] leading-relaxed text-text-gray">
               <BrokenText text="등기부등본이나 계약서를 업로드하면 AI가 위험 조항을 자동으로 찾아드려요." />
             </p>
           </div>
@@ -307,8 +310,9 @@ export default function Home() {
                   : "위험도 분석 시작"}
             </Button>
           </form>
-          <p className="text-center text-[11px] text-text-lightgray">
-            🔒 업로드한 계약서는 분석 후 안전하게 삭제됩니다
+          <p className="flex w-full items-center justify-center gap-1 text-center text-[11px] text-text-lightgray">
+            <img src="/icons/home/lock.svg" alt="" aria-hidden="true" className="shrink-0" />
+            <span>업로드한 계약서는 분석 후 안전하게 삭제됩니다</span>
           </p>
         </Card>
       </section>
@@ -319,8 +323,8 @@ export default function Home() {
             key={feature.title}
             className="rounded-2xl border border-border bg-subtle p-6"
           >
-            <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-primary-bg text-xl text-primary">
-              {feature.icon}
+            <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl border border-border bg-white text-primary shadow-sm">
+              <span className="flex h-[30px] w-[30px] items-center justify-center"><img src={`/icons/home/${feature.icon}.svg`} alt="" aria-hidden="true" className="max-w-none scale-125" /></span>
             </div>
             <div className="text-balance text-[17px] font-bold text-text-dark">
               {feature.title}
