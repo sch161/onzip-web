@@ -1,6 +1,6 @@
 # ONZIP 프로젝트 기술 문서
 
-> 이 문서는 최초 2026-08-18 기준 코드베이스(`src/`, `supabase/functions/`, `supabase/migrations/`, `scripts/`, `.github/workflows/`)를 실제로 읽고 작성했고, 2026-08-21 변경분(계약서 PII 마스킹 파이프라인, 계약서 위험도 코드 계산 전환, 배치 상태판 관리자 전용화, 계정 전환 시 세션 데이터 정리)을 반영해 2026-08-22 갱신했습니다. 이후 2026-09-15(계약서 업로드 이미지 CPU 타임아웃 546 해결)·2026-09-18(심리 가드 판정을 Gemini 자체 판단에서 Cialdini 설득의 6원칙 기반 규칙 매칭으로 전환, HUG 크롤러 재시도/체크포인트 추가) 변경분도 반영했습니다. 계획만 있고 구현되지 않은 부분은 **[미구현]**으로, 구현은 됐지만 한계가 있는 부분은 솔직하게 표기했습니다. 멘토링에서 그대로 읽으면서 설명할 수 있도록 코드 인용보다 흐름 설명 위주로 작성했습니다. 계약서 PII 마스킹의 단계별 상세 흐름(어떤 데이터가 언제 외부로 나가는지 등)은 이 문서에서 중복 서술하지 않고 [`docs/PRIVACY_FLOW.md`](PRIVACY_FLOW.md)를 참고하도록 링크로 대신합니다(단, `PRIVACY_FLOW.md`의 이미지 리사이즈 상한 수치는 2026-08-21 기준 2000px로 남아 있어 2026-09-15 변경분인 1200px가 아직 반영되지 않았습니다 — 아래 7장 참고).
+> 이 문서는 최초 2026-08-18 기준 코드베이스(`src/`, `supabase/functions/`, `supabase/migrations/`, `scripts/`, `.github/workflows/`)를 실제로 읽고 작성했고, 2026-08-21 변경분(계약서 PII 마스킹 파이프라인, 계약서 위험도 코드 계산 전환, 배치 상태판 관리자 전용화, 계정 전환 시 세션 데이터 정리)을 반영해 2026-08-22 갱신했습니다. 이후 2026-09-15(계약서 업로드 이미지 CPU 타임아웃 546 해결)·2026-09-18(심리 가드 판정을 Gemini 자체 판단에서 Cialdini 설득의 6원칙 기반 규칙 매칭으로 전환, HUG 크롤러 재시도/체크포인트 추가)·2026-11-10(AI 호출을 OpenAI 기준 공통 래퍼 `callVisionModel()`로 전환) 변경분도 반영했습니다. 7장의 2026-08~09 사고 기록과 그 안의 수치(타임아웃·소요 시간 등)는 당시 Gemini 기준이며 OpenAI로 다시 측정하지 않았습니다. 계획만 있고 구현되지 않은 부분은 **[미구현]**으로, 구현은 됐지만 한계가 있는 부분은 솔직하게 표기했습니다. 멘토링에서 그대로 읽으면서 설명할 수 있도록 코드 인용보다 흐름 설명 위주로 작성했습니다. 계약서 PII 마스킹의 단계별 상세 흐름(어떤 데이터가 언제 외부로 나가는지 등)은 이 문서에서 중복 서술하지 않고 [`docs/PRIVACY_FLOW.md`](PRIVACY_FLOW.md)를 참고하도록 링크로 대신합니다(단, `PRIVACY_FLOW.md`의 이미지 리사이즈 상한 수치는 2026-08-21 기준 2000px로 남아 있어 2026-09-15 변경분인 1200px가 아직 반영되지 않았습니다 — 아래 7장 참고).
 
 ---
 
@@ -11,7 +11,7 @@
 - **프론트엔드**: Vite + React 18 + TypeScript + Tailwind CSS. SPA(React Router)로 동작하며 별도 SSR/BFF 서버 없음. Vercel에 정적 배포(`vercel.json` 존재).
 - **백엔드**: Supabase Edge Functions(Deno). 사용자 요청 시 실행되는 함수 2개(`analyze-contract`, `analyze-chat`, `delete-account`)와 pg_cron이 주기적으로 호출하는 배치 함수 3개(`fetch-market-data`, `fetch-region-buzz`, `sync-news`)로 구성.
 - **데이터베이스**: Supabase Postgres. 8개 테이블 + Row Level Security(RLS) + `pg_trgm` 확장(트라이그램 유사도 검색) + `pg_cron`/`pg_net`(스케줄링·HTTP 호출) + Supabase Vault(시크릿 보관).
-- **외부 API**: Google Gemini API(계약서/대화 분석), 네이버클라우드 CLOVA OCR(계약서 이미지의 개인정보 위치 검출 → 마스킹, 2026-08-21 추가), 네이버 뉴스 검색 API(뉴스·언급빈도), 국토교통부 실거래가 API(전세가율 산출용 원자료), 카카오맵 SDK(지도 렌더링), Google/Kakao OAuth(소셜 로그인).
+- **외부 API**: OpenAI API(계약서/대화 분석, 현재 운영. `AI_PROVIDER=gemini`로 Google Gemini API 사용도 가능), 네이버클라우드 CLOVA OCR(계약서 이미지의 개인정보 위치 검출 → 마스킹, 2026-08-21 추가), 네이버 뉴스 검색 API(뉴스·언급빈도), 국토교통부 실거래가 API(전세가율 산출용 원자료), 카카오맵 SDK(지도 렌더링), Google/Kakao OAuth(소셜 로그인).
 - **오프-플랫폼 자동화**: GitHub Actions가 주 1회 Node 스크립트(`scripts/sync-hug-defaulters.mjs`)를 실행해 HUG 명단을 크롤링 — Supabase 생태계 밖에서 도는 유일한 자동화.
 
 ### 1-2. 텍스트 다이어그램
@@ -22,17 +22,17 @@
    ├─ VITE_SUPABASE_ANON_KEY (anon key, RLS로 권한 제한) ──▶  Postgres (analyses, gaslighting_checks, region_stats, news 등 SELECT)
    ├─ supabase.functions.invoke('analyze-contract') ─┐
    ├─ supabase.functions.invoke('analyze-chat')      ─┼─▶  [Supabase Edge Functions, Deno]
-   ├─ supabase.functions.invoke('delete-account')    ─┘        │  GEMINI_API_KEY, NAVER_*, MOLIT_API_KEY,
+   ├─ supabase.functions.invoke('delete-account')    ─┘        │  OPENAI_API_KEY, GEMINI_API_KEY, NAVER_*, MOLIT_API_KEY,
    └─ VITE_KAKAO_MAP_KEY ──▶ 카카오맵 SDK(dapi.kakao.com, 브라우저에서 직접 로드)  │  CLOVA_OCR_INVOKE_URL/SECRET_KEY
                                                                  │  (Supabase Secrets, 서버 전용)
                                                                  ▼
-                    Google Gemini API / CLOVA OCR API / 네이버 뉴스 API / 국토교통부 실거래가 API
+                    OpenAI API (또는 Gemini) / CLOVA OCR API / 네이버 뉴스 API / 국토교통부 실거래가 API
                                                                  │
                                                                  ▼
                                     service_role 클라이언트로 Postgres에 결과 저장 (RLS 우회)
 
    ※ analyze-contract는 이미지를 CLOVA OCR로 먼저 분석해 개인정보 위치를 찾아 검은 사각형으로
-     마스킹한 뒤에만 Gemini로 보낸다(2026-08-21 추가). 이 단계별 데이터 흐름은 이 문서에서
+     마스킹한 뒤에만 OpenAI로 보낸다(2026-08-21 추가). 이 단계별 데이터 흐름은 이 문서에서
      반복 서술하지 않고 PRIVACY_FLOW.md에 근거 라인 번호와 함께 정리돼 있다.
 
 [pg_cron, Postgres 내부 스케줄러]
@@ -47,9 +47,9 @@
 
 ### 1-3. 왜 이런 구조를 택했는가
 
-**API 키를 서버(Edge Function)에만 두는 이유**는 브라우저 번들에 포함되는 모든 `VITE_` 접두사 환경변수는 최종 사용자에게 그대로 노출되기 때문입니다. Gemini/네이버/국토부 키가 프론트에 있으면 누구나 개발자 도구로 추출해 무단 사용·과금 유발이 가능합니다. 그래서:
+**API 키를 서버(Edge Function)에만 두는 이유**는 브라우저 번들에 포함되는 모든 `VITE_` 접두사 환경변수는 최종 사용자에게 그대로 노출되기 때문입니다. OpenAI/Gemini/네이버/국토부 키가 프론트에 있으면 누구나 개발자 도구로 추출해 무단 사용·과금 유발이 가능합니다. 그래서:
 
-- `GEMINI_API_KEY`, `NAVER_CLIENT_ID/SECRET`, `MOLIT_API_KEY`, `CLOVA_OCR_INVOKE_URL`/`CLOVA_OCR_SECRET_KEY`는 **Supabase Secrets**(Edge Function 런타임에만 주입되는 환경변수)에 두고, 프론트는 이 값들을 절대 참조하지 않습니다. 대신 프론트는 `supabase.functions.invoke(...)`로 Edge Function을 호출하고, 실제 외부 API 호출은 서버 쪽 코드가 대행합니다.
+- `OPENAI_API_KEY`, `GEMINI_API_KEY`, `NAVER_CLIENT_ID/SECRET`, `MOLIT_API_KEY`, `CLOVA_OCR_INVOKE_URL`/`CLOVA_OCR_SECRET_KEY`는 **Supabase Secrets**(Edge Function 런타임에만 주입되는 환경변수)에 두고, 프론트는 이 값들을 절대 참조하지 않습니다. 대신 프론트는 `supabase.functions.invoke(...)`로 Edge Function을 호출하고, 실제 외부 API 호출은 서버 쪽 코드가 대행합니다.
 - `SUPABASE_SERVICE_ROLE_KEY`(RLS를 완전히 우회하는 최고 권한 키)는 GitHub Actions Secrets에만 존재하고, 리포지토리 코드 어디에도 값 자체가 없습니다. 이 키가 필요한 이유는 계약서/대화 분석 결과를 `analyses`/`gaslighting_checks`에 쓸 때, 그리고 HUG 명단을 `hug_defaulters`에 upsert할 때 RLS 정책(본인 데이터만 SELECT 가능)을 우회해 시스템이 대신 써야 하기 때문입니다.
 - 반대로 **카카오맵 JavaScript 키**(`VITE_KAKAO_MAP_KEY`)는 프론트 환경변수로 관리합니다. 애초에 브라우저에서 직접 로드되는 것을 전제로 발급되는 키이고, 카카오 개발자 콘솔에서 도메인 화이트리스트로 오남용을 막는 구조이기 때문에 서버에 숨길 이유가 없습니다.
 - 사용자 요청형 함수(`analyze-contract`, `analyze-chat`)는 `supabase/config.toml`에서 `verify_jwt = false`로 설정되어 있습니다. 이유는 프로젝트가 신규 형식의 publishable anon key(`sb_publishable_...`)를 쓰는데, 이는 JWT가 아니라서 비로그인 상태에서는 Authorization 헤더 자체가 안 실리기 때문입니다(`verify_jwt=true`면 비로그인 사용자의 모든 요청이 거부됨). 대신 함수 내부에서 `Authorization` 헤더가 있으면 파싱해 `user_id`를 선택적으로 채우고, 없으면 `user_id`를 `null`로 저장합니다 — 즉 **비로그인 상태에서도 분석 자체는 가능하지만 이력이 남지 않습니다.**
@@ -87,14 +87,14 @@
 **② 처리 — PDF 변환 및 프론트 인코딩** — PDF를 선택한 경우 `convertPdfToImage()`(`src/lib/pdfToImage.ts`, 2026-08-21 추가)가 pdf.js로 각 페이지를 캔버스에 렌더링해 세로로 이어붙인 뒤 PNG `Blob` 하나로 변환합니다. 이 변환은 **전부 브라우저 안에서 끝나고 서버는 PDF 자체를 받지 않습니다**(Edge Function은 `image/jpeg`·`image/png`가 아니면 즉시 400). 이후 `analyzeContract()`(`src/lib/analyzeContract.ts`)가 (변환된 경우 이미지) 파일을 `arrayBuffer()`로 읽어 바이트 단위로 순회하며 `btoa()`로 base64 문자열을 만듭니다(청크 분할 없이 메인 스레드에서 동기 실행 — 큰 파일일수록 UI가 잠깐 멈출 수 있음). 이후 `{ address, deposit, buildingType, fileBase64, fileMimeType }`을 body로 `supabase.functions.invoke('analyze-contract')`를 호출합니다. 업로드는 별도 Storage 경유 없이 **파일 전체를 JSON 요청 본문에 base64로 실어 보내는 방식**입니다.
 
 **③ 처리 — Edge Function `analyze-contract`**
-1. `address` 또는 `fileBase64` 둘 중 하나는 필수(둘 다 없으면 400). `GEMINI_API_KEY` 미설정 시 500.
-2. **개인정보 마스킹 (2026-08-21 추가)** — 첨부 파일이 있으면 Gemini를 호출하기 전에 CLOVA OCR로 텍스트·좌표를 읽어 주민등록번호·계좌번호·전화번호·임대인/임차인 성명·당사자 개인 주소를 찾아 검은 사각형으로 가리고, **마스킹된 이미지로 원본을 교체한 뒤에만** Gemini에 보냅니다. 이미지 정규화·OCR·마스킹 중 어느 단계든 실패하면 즉시 422 에러로 분석을 중단합니다(fail-safe — 원본이나 부분 마스킹본이 Gemini로 새어나가는 경우가 없도록). 임대인 성명은 OCR로 읽은 값을 서버 메모리에만 갖고 있다가 8번 단계(HUG 명단 조회)에만 쓰고 Gemini 요청에는 포함되지 않습니다. 이 파이프라인의 단계별 상세(정규식·라벨 매칭 로직, 각 단계에서 무엇이 외부로 나가는지, 발견·수정된 개인정보 문제 2건 등)는 [`docs/PRIVACY_FLOW.md`](../docs/PRIVACY_FLOW.md)에 근거 라인과 함께 정리돼 있습니다.
-3. **"RAG" 단계 (2026-08-28 키워드 필터링 추가)** — `contract_risk_patterns`(전세사기·독소조항 실제 피해 패턴 DB, 20건)를 일단 `SELECT *`로 전부 가져오되, 프롬프트에는 **OCR로 이미 읽은 계약서 텍스트에 그 패턴의 핵심 키워드가 하나라도 등장하는 패턴만** 골라 넣습니다(`_shared/riskPatternFilter.ts`의 `filterRiskPatternsByKeywords`). 키워드는 자동 추출이 아니라 20건 실데이터를 직접 확인하고 사람이 고른 목록(`RISK_PATTERN_KEYWORDS`, pattern id → 키워드 배열)이라, 패턴이 추가·수정되면 이 목록도 같이 손봐야 합니다. **매칭이 0건이거나(OCR 텍스트에 키워드가 전혀 없음) 애초에 첨부 파일이 없어 OCR 텍스트 자체가 없으면 안전하게 20건 전체로 폴백**합니다 — 매칭 0건을 "정말 위험 없음"으로 속단하기보다, 근거 사례 없이 Gemini 혼자 판단하게 두는 쪽이 더 위험하다고 판단했기 때문입니다. 몇 건이 매칭됐는지는 매 요청마다 `Risk pattern filter` 로그 한 줄(`totalPatterns`/`matchedPatterns`/`matchedIds`/`fellBackToAll`)로 남습니다. 여전히 벡터 임베딩·전문검색(tsvector)이 아니라 단순 부분 문자열 매칭이라, 키워드 목록에 없는 표현으로 위험 신호가 있으면 놓칠 수 있습니다 — "테이블이 커지면 검색 기반으로 바꿀 것"이라는 원래 주석은 여전히 유효한 다음 단계입니다. 이 20건이 어디서 왔는지는 개별 패턴마다 판례를 인용한 것이 아니라, 경기도 전세피해지원센터 사례집·국토교통부/HUG 가이드북·한국공인중개사협회 체크리스트 3개 자료를 종합해 정리한 것이며(2026-08-26부터 `pattern_sources` 테이블에 데이터셋 전체 수준의 출처로 기록, `/scoring` 페이지에 노출), `/analysis`의 "AI 위험 패턴 감지" 배너에도 같은 안내가 표시됩니다.
-4. **법 조항 연동 (2026-08-28 추가)** — 위에서 프롬프트에 실제로 포함된(=매칭된) 위험 패턴에 `pattern_legal_provisions`로 연결된 `legal_provisions`(주택임대차보호법 5개 조·민법 2개 조 원문, 국가법령정보센터 확인)만 `fetchLegalProvisionsForPatterns()`가 조회해 `[관련 법 조항 후보]`로 프롬프트에 추가합니다. Gemini 응답 스키마의 `detectedClauses[].legalProvisionId`는 이 후보 목록의 id 중에서만 고르도록 프롬프트에 지침을 넣었고, 서버는 응답을 받으면 그 id가 실제로 제공한 후보에 있는지 다시 검증한 뒤(환각 방지) 조문 전체 정보(`lawName`/`article`/`title`/`plainExplanation`/`sourceUrl`)로 치환해서 내려줍니다(`resolveDetectedClauses`). 20개 패턴 중 근거가 명확한 5개(#1·#7·#12·#14·#17)만 연결되어 있고 나머지는 조항 없이 `legalProvision: null`로 내려갑니다(#2·#16은 애매해서 의도적으로 제외). `/analysis`의 "발견된 유의 조항" 각 항목 아래에 `관련 법령: ○○법 제○조 — 쉬운 설명` + 국가법령정보센터 링크로 표시됩니다(legalProvision이 없으면 이 블록 자체가 안 뜸).
-5. Gemini API(기본값은 `gemini-flash-latest`이지만 **2026-08-28부터 Supabase Secret `GEMINI_MODEL`을 `gemini-3.6-flash`로 고정**해 이 값이 실제로 쓰입니다 — 7장 "과거 발생했던 사고" 참고)를 멀티모달로 호출합니다. 마스킹된 이미지는 `inline_data`로 프롬프트에 직접 첨부하고, `responseSchema`로 JSON 스키마를 강제해 구조화된 응답을 받습니다. 이때 Gemini에게 요구하는 카테고리 점수는 **권리관계·특약사항·건물상태 3개뿐**입니다(전세가율은 서버가 별도로 계산 — 6번 참고). 429(과부하)/503(할당량 초과) 응답 시 `[1000ms, 3000ms]` 지연으로 최대 2회 재시도(총 3회 시도), 요청당 타임아웃 28초. 이 Gemini 호출과 6번의 전세가율 계산은 서로 무관하므로 `Promise.all`로 병렬 실행합니다. **파이프라인 단계별 소요 시간(리사이즈·CLOVA OCR·마스킹 판별·이미지 편집·패턴 필터링·법 조항 조회·Gemini 호출·전체, ms 단위)은 요청이 성공하든 502/타임아웃으로 실패하든 항상 `analyze-contract stage timings (ms)` 한 줄의 JSON 로그로 남습니다**(2026-08-28 추가 — 처음엔 성공 경로에서만 찍히게 짜서 정작 실패한 요청은 어디서 시간이 갔는지 알 수 없었고, 이후 실패 경로에서도 찍히도록 고쳤습니다). 이 로그를 이용한 502 진단 절차는 7장 "과거 발생했던 사고"를 참고하세요.
+1. `address` 또는 `fileBase64` 둘 중 하나는 필수(둘 다 없으면 400). 현재 `AI_PROVIDER`가 가리키는 쪽의 API 키(`OPENAI_API_KEY` 또는 `GEMINI_API_KEY`)가 미설정이면 500.
+2. **개인정보 마스킹 (2026-08-21 추가)** — 첨부 파일이 있으면 AI를 호출하기 전에 CLOVA OCR로 텍스트·좌표를 읽어 주민등록번호·계좌번호·전화번호·임대인/임차인 성명·당사자 개인 주소를 찾아 검은 사각형으로 가리고, **마스킹된 이미지로 원본을 교체한 뒤에만** OpenAI에 보냅니다. 이미지 정규화·OCR·마스킹 중 어느 단계든 실패하면 즉시 422 에러로 분석을 중단합니다(fail-safe — 원본이나 부분 마스킹본이 AI로 새어나가는 경우가 없도록). 임대인 성명은 OCR로 읽은 값을 서버 메모리에만 갖고 있다가 8번 단계(HUG 명단 조회)에만 쓰고 AI 요청에는 포함되지 않습니다. 이 파이프라인의 단계별 상세(정규식·라벨 매칭 로직, 각 단계에서 무엇이 외부로 나가는지, 발견·수정된 개인정보 문제 2건 등)는 [`docs/PRIVACY_FLOW.md`](../docs/PRIVACY_FLOW.md)에 근거 라인과 함께 정리돼 있습니다.
+3. **"RAG" 단계 (2026-08-28 키워드 필터링 추가)** — `contract_risk_patterns`(전세사기·독소조항 실제 피해 패턴 DB, 20건)를 일단 `SELECT *`로 전부 가져오되, 프롬프트에는 **OCR로 이미 읽은 계약서 텍스트에 그 패턴의 핵심 키워드가 하나라도 등장하는 패턴만** 골라 넣습니다(`_shared/riskPatternFilter.ts`의 `filterRiskPatternsByKeywords`). 키워드는 자동 추출이 아니라 20건 실데이터를 직접 확인하고 사람이 고른 목록(`RISK_PATTERN_KEYWORDS`, pattern id → 키워드 배열)이라, 패턴이 추가·수정되면 이 목록도 같이 손봐야 합니다. **매칭이 0건이거나(OCR 텍스트에 키워드가 전혀 없음) 애초에 첨부 파일이 없어 OCR 텍스트 자체가 없으면 안전하게 20건 전체로 폴백**합니다 — 매칭 0건을 "정말 위험 없음"으로 속단하기보다, 근거 사례 없이 AI 혼자 판단하게 두는 쪽이 더 위험하다고 판단했기 때문입니다. 몇 건이 매칭됐는지는 매 요청마다 `Risk pattern filter` 로그 한 줄(`totalPatterns`/`matchedPatterns`/`matchedIds`/`fellBackToAll`)로 남습니다. 여전히 벡터 임베딩·전문검색(tsvector)이 아니라 단순 부분 문자열 매칭이라, 키워드 목록에 없는 표현으로 위험 신호가 있으면 놓칠 수 있습니다 — "테이블이 커지면 검색 기반으로 바꿀 것"이라는 원래 주석은 여전히 유효한 다음 단계입니다. 이 20건이 어디서 왔는지는 개별 패턴마다 판례를 인용한 것이 아니라, 경기도 전세피해지원센터 사례집·국토교통부/HUG 가이드북·한국공인중개사협회 체크리스트 3개 자료를 종합해 정리한 것이며(2026-08-26부터 `pattern_sources` 테이블에 데이터셋 전체 수준의 출처로 기록, `/scoring` 페이지에 노출), `/analysis`의 "AI 위험 패턴 감지" 배너에도 같은 안내가 표시됩니다.
+4. **법 조항 연동 (2026-08-28 추가)** — 위에서 프롬프트에 실제로 포함된(=매칭된) 위험 패턴에 `pattern_legal_provisions`로 연결된 `legal_provisions`(주택임대차보호법 5개 조·민법 2개 조 원문, 국가법령정보센터 확인)만 `fetchLegalProvisionsForPatterns()`가 조회해 `[관련 법 조항 후보]`로 프롬프트에 추가합니다. AI 응답 스키마의 `detectedClauses[].legalProvisionId`는 이 후보 목록의 id 중에서만 고르도록 프롬프트에 지침을 넣었고, 서버는 응답을 받으면 그 id가 실제로 제공한 후보에 있는지 다시 검증한 뒤(환각 방지) 조문 전체 정보(`lawName`/`article`/`title`/`plainExplanation`/`sourceUrl`)로 치환해서 내려줍니다(`resolveDetectedClauses`). 20개 패턴 중 근거가 명확한 5개(#1·#7·#12·#14·#17)만 연결되어 있고 나머지는 조항 없이 `legalProvision: null`로 내려갑니다(#2·#16은 애매해서 의도적으로 제외). `/analysis`의 "발견된 유의 조항" 각 항목 아래에 `관련 법령: ○○법 제○조 — 쉬운 설명` + 국가법령정보센터 링크로 표시됩니다(legalProvision이 없으면 이 블록 자체가 안 뜸).
+5. 공통 래퍼 `_shared/callVisionModel.ts`의 `callVisionModel()`로 AI를 멀티모달 호출합니다. `AI_PROVIDER` 시크릿으로 제공자를 고르며 코드 기본값은 `gemini`, 현재 운영은 `openai`입니다. **OpenAI 경로**는 SDK 없이 `fetch`로 Responses API를 호출하고(모델 기본값 `gpt-6.1-sol`, `OPENAI_MODEL`로 변경), 마스킹된 이미지는 `input_image`(data URL)로 첨부하며, `text.format`의 strict `json_schema`로 구조화된 응답을 받습니다(기존 스키마를 코드로 변환해 같은 필드 구조를 유지). 출력 토큰 상한은 8000(상한에 걸려 잘리면 오류), 응답 저장 옵션은 `store: false`로 끄고, 재시도는 429·5xx 응답에 1회(1초 대기)뿐이며 타임아웃(`OPENAI_TIMEOUT_MS`, 기본 45000ms)은 재시도하지 않습니다. **Gemini 경로**는 기존 그대로입니다 — 기본 모델은 `gemini-flash-latest`이지만 **2026-08-28부터 Supabase Secret `GEMINI_MODEL`을 `gemini-3.6-flash`로 고정**해 이 값이 실제로 쓰이고(7장 "과거 발생했던 사고" 참고), 이미지는 `inline_data`, 스키마는 `responseSchema`로 강제하며, 429(과부하)/503(할당량 초과) 응답과 타임아웃 시 `[1000ms, 3000ms]` 지연으로 최대 2회 재시도(총 3회 시도), 요청당 타임아웃 28초입니다. 환경변수 표는 README의 "AI 제공자 설정"을 참고하세요. 이때 AI에게 요구하는 카테고리 점수는 **권리관계·특약사항·건물상태 3개뿐**입니다(전세가율은 서버가 별도로 계산 — 6번 참고). 429(과부하)/503(할당량 초과) 응답 시 `[1000ms, 3000ms]` 지연으로 최대 2회 재시도(총 3회 시도), 요청당 타임아웃 28초. 이 AI 호출과 6번의 전세가율 계산은 서로 무관하므로 `Promise.all`로 병렬 실행합니다. **파이프라인 단계별 소요 시간(리사이즈·CLOVA OCR·마스킹 판별·이미지 편집·패턴 필터링·법 조항 조회·AI 호출·전체, ms 단위)은 요청이 성공하든 502/타임아웃으로 실패하든 항상 `analyze-contract stage timings (ms)` 한 줄의 JSON 로그로 남습니다(AI 호출 소요시간의 로그 필드명은 예전 그대로 `gemini`)**(2026-08-28 추가 — 처음엔 성공 경로에서만 찍히게 짜서 정작 실패한 요청은 어디서 시간이 갔는지 알 수 없었고, 이후 실패 경로에서도 찍히도록 고쳤습니다). 이 로그를 이용한 502 진단 절차는 7장 "과거 발생했던 사고"를 참고하세요.
 6. **전세가율은 서버가 국토부 실거래가로 직접 계산합니다(2026-08-21 추가)** — 계약서 주소를 Postgres 함수 `match_region_by_address(input_address)`에 넘겨 `region_stats`에서 가장 구체적으로 일치하는 지역을 찾고, 그 지역의 평균 매매가(건물 유형이 아파트가 아니면 연립다세대 시세 우선)와 보증금을 비교합니다. 주소가 지역과 매칭되지 않거나 그 지역의 최근 실거래가가 없으면 이 카테고리는 `score: null`("데이터 없음")이 되어 종합 점수 계산에서 제외됩니다.
-7. **종합 점수(`overallScore`)는 이제 서버가 가중평균으로 계산합니다**(`_shared/contractScore.ts`의 `calculateOverallScore`, 2026-08-21 도입 — 이전에는 Gemini가 직접 산출했음. 상세 공식은 6-2 참고). Gemini의 3개 카테고리 점수 + 서버가 계산한 전세가율 카테고리를 권리관계 35% · 특약사항 30% · 전세가율 25% · 건물상태 10%로 가중평균하고, `hugLandlordCheck.isBlacklisted`가 true면(대항력 악용·신탁 부동산 등 패턴 DB와 일치) 계산 결과가 낮게 나와도 최소 61점(위험 등급 하한)으로 끌어올립니다. 카테고리 자체의 점수(권리관계/특약사항/건물상태)는 여전히 Gemini의 판단이라 비결정적이지만, **그 점수들을 종합 점수로 합치는 방식은 코드로 고정돼 있어 재현 가능**합니다.
-8. Gemini가 계약서에서 추출하지 못하는(마스킹돼 있으므로) `landlordName`은 OCR로 직접 읽은 값을 서버가 응답에 주입합니다. 이 이름이 있으면 별도로 Postgres 함수 `search_hug_defaulters_by_name(query_name, min_similarity=0.4)`를 호출합니다 — `pg_trgm`의 `similarity()` 함수로 이름 컬럼만 비교하는 트라이그램 유사도 검색이며, 유사도 0.4 이상인 상위 5건을 반환합니다. 이 결과는 `hugDefaulterMatch`라는 **별도 필드**로 응답에 붙습니다 — Gemini가 패턴만 보고 "추정"한 `hugLandlordCheck`와는 명확히 구분되는, **공식 명단 대조에 기반한 사실 확인**입니다.
+7. **종합 점수(`overallScore`)는 이제 서버가 가중평균으로 계산합니다**(`_shared/contractScore.ts`의 `calculateOverallScore`, 2026-08-21 도입 — 이전에는 Gemini가 직접 산출했음. 상세 공식은 6-2 참고). AI의 3개 카테고리 점수 + 서버가 계산한 전세가율 카테고리를 권리관계 35% · 특약사항 30% · 전세가율 25% · 건물상태 10%로 가중평균하고, `hugLandlordCheck.isBlacklisted`가 true면(대항력 악용·신탁 부동산 등 패턴 DB와 일치) 계산 결과가 낮게 나와도 최소 61점(위험 등급 하한)으로 끌어올립니다. 카테고리 자체의 점수(권리관계/특약사항/건물상태)는 여전히 AI의 판단이라 비결정적이지만, **그 점수들을 종합 점수로 합치는 방식은 코드로 고정돼 있어 재현 가능**합니다.
+8. AI가 계약서에서 추출하지 못하는(마스킹돼 있으므로) `landlordName`은 OCR로 직접 읽은 값을 서버가 응답에 주입합니다. 이 이름이 있으면 별도로 Postgres 함수 `search_hug_defaulters_by_name(query_name, min_similarity=0.4)`를 호출합니다 — `pg_trgm`의 `similarity()` 함수로 이름 컬럼만 비교하는 트라이그램 유사도 검색이며, 유사도 0.4 이상인 상위 5건을 반환합니다. 이 결과는 `hugDefaulterMatch`라는 **별도 필드**로 응답에 붙습니다 — AI가 패턴만 보고 "추정"한 `hugLandlordCheck`와는 명확히 구분되는, **공식 명단 대조에 기반한 사실 확인**입니다.
 9. 최종적으로 `analyses` 테이블에 service_role 클라이언트로 insert합니다(주소/보증금/건물유형/점수/등급/`score_direction`/카테고리/조항/추천조치/코멘트 — 이미지·OCR 원문·임대인 성명·HUG 대조 결과는 저장하지 않음). 저장이 실패해도 사용자에게 보여줄 분석 결과 자체는 정상 반환됩니다(이력 저장 실패가 사용자 경험을 막지 않도록 설계).
 
 **④ 결과** — `Analysis.tsx`가 응답을 `sessionStorage`에 캐싱하며 렌더링합니다(단, `landlordName`은 캐싱 직전에 제외 — 자세한 경위는 PRIVACY_FLOW.md 3.2 참고). HUG 공식 명단과 일치하면 빨간 배너("HUG 상습 채무불이행자 명단에서 발견"), AI 패턴 추정만 있으면 주황 배너("AI 위험 패턴 감지")로 시각적으로 구분해 보여줍니다. `RiskGauge`로 종합 점수, 카테고리별(권리관계·특약사항·전세가율·건물상태) 막대, 발견된 유의 조항, AI 추천 조치를 표시합니다. 점수는 "높을수록 위험"이며(안심 시그널 맵과 동일 방향), `scoreDirection`이 `'legacy_low_is_risky'`(2026-08-21 이전 이력)이면 예전 채점 기준이었다는 안내 문구로 바뀝니다.
@@ -103,7 +103,7 @@
 
 **① 입력** — `Cure.tsx`의 채팅형 UI에서 텍스트(엔터로 전송, Shift+Enter 줄바꿈) 또는 캡처 이미지 1장을 첨부합니다. 대화 스레드는 `sessionStorage`(`onzip:psychGuardMessages`)에 저장되어 탭 내에서는 유지되지만 탭을 닫으면 사라집니다 — DB(`gaslighting_checks`)와는 별개의 저장소라서, 만약 DB insert가 실패해도 화면상 대화는 그대로 보입니다.
 
-**② 처리** — `analyzeChat()`이 동일한 방식으로 base64 인코딩 후 Edge Function `analyze-chat`을 호출합니다. Gemini 호출 로직(모델명, 재시도 횟수/지연, 타임아웃)은 `analyze-contract`와 **완전히 동일하지만 코드가 별도 파일에 복사되어 있어 중복**입니다. 패턴별 확신도(재촉/허위정보 주입/신뢰 유도 각각 0~100점)와 종합 `confidence`, `aiReply`, `suggestedResponse`는 여전히 Gemini가 JSON으로 직접 산출합니다. 다만 **최종 `riskLevel`(위험/주의/안전)과 경고 여부(`isWarning`)는 2026-09-18부터 규칙 기반 `_shared/psychGuard.ts`의 `analyzePsychGuard()` 결과가 우선**합니다 — Gemini에게 "가스라이팅이 있나"를 직접 묻던 방식은 AI의 주관적 판단이라 신뢰도가 낮다고 보고, Robert Cialdini(1984)의 설득의 6원칙(희소성·권위·사회적 증거·상호성·호감·일관성) 기준 카테고리별 키워드가 메시지 텍스트에 포함(`includes`, 정규식 아님)되는지로 점수화해(카테고리 점수 = 매칭 수 × weight, 서로 다른 카테고리 2개 이상 매칭 시 +5 복합 보너스) 등급(0~20 안전/21~50 주의/51+ 위험)을 매기도록 바꿨습니다. 메시지 텍스트가 없는 이미지 전용 요청은 매칭할 텍스트가 없어 Gemini의 판단을 그대로 둡니다. `gaslighting_checks`에 service_role로 insert하는 값(위험등급 등)은 이렇게 덮어써진 최종값입니다 — Gemini의 답장 문구 `aiReply` 자체는 DB에 저장되지 않고 응답에만 포함됨).
+**② 처리** — `analyzeChat()`이 동일한 방식으로 base64 인코딩 후 Edge Function `analyze-chat`을 호출합니다. AI 호출은 `analyze-contract`와 같은 공통 래퍼 `callVisionModel()`을 씁니다(2026-11-10 통합 — 이전에는 호출·재시도 코드가 두 파일에 복사돼 있었음). 다만 이 함수에는 계약서와 같은 마스킹 단계가 없어, 첨부한 캡처 이미지는 가림 처리 없이 그대로 AI 제공자(OpenAI)로 전송됩니다. 패턴별 확신도(재촉/허위정보 주입/신뢰 유도 각각 0~100점)와 종합 `confidence`, `aiReply`, `suggestedResponse`는 여전히 AI가 JSON으로 직접 산출합니다. 다만 **최종 `riskLevel`(위험/주의/안전)과 경고 여부(`isWarning`)는 2026-09-18부터 규칙 기반 `_shared/psychGuard.ts`의 `analyzePsychGuard()` 결과가 우선**합니다 — Gemini에게 "가스라이팅이 있나"를 직접 묻던 방식은 AI의 주관적 판단이라 신뢰도가 낮다고 보고, Robert Cialdini(1984)의 설득의 6원칙(희소성·권위·사회적 증거·상호성·호감·일관성) 기준 카테고리별 키워드가 메시지 텍스트에 포함(`includes`, 정규식 아님)되는지로 점수화해(카테고리 점수 = 매칭 수 × weight, 서로 다른 카테고리 2개 이상 매칭 시 +5 복합 보너스) 등급(0~20 안전/21~50 주의/51+ 위험)을 매기도록 바꿨습니다. 메시지 텍스트가 없는 이미지 전용 요청은 매칭할 텍스트가 없어 AI의 판단을 그대로 둡니다. `gaslighting_checks`에 service_role로 insert하는 값(위험등급 등)은 이렇게 덮어써진 최종값입니다 — AI의 답장 문구 `aiReply` 자체는 DB에 저장되지 않고 응답에만 포함됨).
 
 **③ 결과** — `AnalysisPanel`이 `RiskGauge`(확신도 기준)와 패턴별 칩을 보여줍니다. 칩 색상은 점수 70 이상 위험/40 이상 주의/그 미만 안전으로 나누는 `patternTone()` 함수로 정하는데, 이 함수는 `Cure.tsx`와 `GaslightingDetail.tsx`에 **각각 복사**되어 있습니다. 사용자가 바로 복사해 쓸 수 있는 "AI 추천 대응 멘트"(`suggestedResponse`)도 함께 표시됩니다.
 
@@ -263,10 +263,10 @@ riskLevel = riskScore ≥ 70 → '위험'
 
 ### 6-2. 계약서 위험도 — 이제 서버가 가중평균으로 계산 (2026-08-21 개편)
 
-이전에는 **계약서의 `overallScore`(0~100)와 `riskLevel`을 Gemini가 직접 산출**해 서버는 JSON을 그대로 파싱해 쓰는 구조였고, 재현성이 보장되지 않는다는 문제가 있었습니다(같은 계약서를 두 번 올려도 값이 달라질 수 있었음). `_shared/contractScore.ts`가 이 문제를 해결하기 위해 도입됐습니다 — Gemini의 역할을 "카테고리별 위험도 판단"으로 좁히고, **그 판단들을 종합 점수로 합치는 계산은 서버 코드가 고정된 공식으로 수행**합니다.
+이전에는 **계약서의 `overallScore`(0~100)와 `riskLevel`을 Gemini가 직접 산출**해 서버는 JSON을 그대로 파싱해 쓰는 구조였고, 재현성이 보장되지 않는다는 문제가 있었습니다(같은 계약서를 두 번 올려도 값이 달라질 수 있었음). `_shared/contractScore.ts`가 이 문제를 해결하기 위해 도입됐습니다 — AI의 역할을 "카테고리별 위험도 판단"으로 좁히고, **그 판단들을 종합 점수로 합치는 계산은 서버 코드가 고정된 공식으로 수행**합니다.
 
 **입력 — 카테고리 4개**:
-1. 권리관계, 특약사항, 건물상태 — Gemini가 각각 0~100점(높을수록 위험)으로 채점(3-1의 ③-4 참고). 이 3개는 여전히 Gemini의 비결정적 판단입니다.
+1. 권리관계, 특약사항, 건물상태 — AI가 각각 0~100점(높을수록 위험)으로 채점(3-1의 ③-4 참고). 이 3개는 여전히 AI의 비결정적 판단입니다.
 2. 전세가율 — 서버가 `match_region_by_address` RPC로 계약서 주소를 지역에 매칭하고, 그 지역의 국토부 실거래가 평균 매매가와 보증금을 비교해 계산(3-1의 ③-5 참고, 안심맵과 동일한 `jeonseRatioScore()` 곡선 재사용). 매칭 실패·시세 데이터 없음이면 `score: null`.
 
 **결합 — `calculateOverallScore(categories, hasCriticalPattern)`**:
@@ -278,7 +278,7 @@ overallScore = round( Σ (카테고리 점수 × 정규화된 가중치) )
   # 정규화: score가 null인 카테고리는 계산에서 제외하고, 남은 카테고리끼리 가중치 합이 1이 되도록
   # 다시 나눈다(예: 전세가율이 데이터 없음이면 나머지 3개가 35/30/10을 남은 비율로 재분배).
 
-hasCriticalPattern(= Gemini의 hugLandlordCheck.isBlacklisted)가 true면:
+hasCriticalPattern(= AI의 hugLandlordCheck.isBlacklisted)가 true면:
   overallScore = max(overallScore, 61)   # CRITICAL_PATTERN_FLOOR — 계산상 안전해 보여도
                                           # 확인된 위험 패턴이 있으면 강제로 위험 등급 하한까지 끌어올림
 
@@ -291,7 +291,7 @@ DANGER_THRESHOLD(60)와 SUCCESS_THRESHOLD(30)는 코드 주석에 따르면 개�
 
 **HUG 명단 실명 대조(`hugDefaulterMatch`)는 이 공식과 별개**입니다 — 서버가 직접 SQL로 계산한 사실 확인 값이지만, `overallScore` 계산에는 관여하지 않고 응답에 별도 필드로만 붙습니다(화면에서는 빨간 배너로 별도 표시).
 
-**남은 비결정성**: 종합 점수를 만드는 결합 공식 자체는 100% 재현 가능하지만, 입력값인 권리관계·특약사항·건물상태 3개 카테고리 점수는 여전히 Gemini가 매번 새로 판단하는 값이라 완전한 재현성은 아닙니다(전세가율만 완전한 결정론). 심리 가드의 패턴별 확신도/`confidence`는 이번 개편과 무관하게 이전과 동일하게 Gemini가 산출한 값을 그대로 쓰지만, **최종 `riskLevel`/`isWarning`은 2026-09-18부터 규칙 기반 `analyzePsychGuard()`가 결정**해 계약서 위험도와 마찬가지로 "최종 판정 자체는 재현 가능, 일부 세부 값은 비결정적"인 절충 구조가 됐습니다(3-2 참고).
+**남은 비결정성**: 종합 점수를 만드는 결합 공식 자체는 100% 재현 가능하지만, 입력값인 권리관계·특약사항·건물상태 3개 카테고리 점수는 여전히 AI가 매번 새로 판단하는 값이라 완전한 재현성은 아닙니다(전세가율만 완전한 결정론). 심리 가드의 패턴별 확신도/`confidence`는 이번 개편과 무관하게 이전과 동일하게 AI가 산출한 값을 그대로 쓰지만, **최종 `riskLevel`/`isWarning`은 2026-09-18부터 규칙 기반 `analyzePsychGuard()`가 결정**해 계약서 위험도와 마찬가지로 "최종 판정 자체는 재현 가능, 일부 세부 값은 비결정적"인 절충 구조가 됐습니다(3-2 참고).
 
 **점수 방향과 등급 경계는 앱 내 `/scoring`(`ScoringGuide.tsx`) 페이지에도 노출됩니다** — 이 화면은 `CATEGORY_WEIGHTS`/`calculateOverallScore`의 값을 하드코딩된 표로 옮겨 보여줄 뿐 실제 상수를 import하지는 않으므로, `_shared/contractScore.ts`나 `_shared/riskScore.ts`의 값이 바뀌면 `ScoringGuide.tsx`도 사람이 함께 고쳐야 합니다(코드 주석에 "같은 값을 유지해야 한다"고 명시돼 있음 — 7장의 코드 품질 항목 참고).
 
@@ -302,7 +302,7 @@ DANGER_THRESHOLD(60)와 SUCCESS_THRESHOLD(30)는 코드 주석에 따르면 개�
 코드에 리터럴 `TODO`/`FIXME` 주석은 없었습니다(전체 `src/`, `supabase/` 검색 결과 0건). 다만 실질적으로 TODO에 해당하는 주석과, 코드를 직접 읽어야만 드러나는 한계들은 다음과 같습니다.
 
 **정확도·재현성 관련**
-- 계약서 위험 점수(`overallScore`, `riskLevel`)는 2026-08-21부터 종합 점수 결합 방식은 서버 공식으로 고정됐지만(6-2 참고), 그 입력값인 권리관계·특약사항·건물상태 3개 카테고리 점수는 여전히 Gemini가 매번 새로 판단하는 값이라 완전한 재현성은 아닙니다(전세가율만 완전한 결정론).
+- 계약서 위험 점수(`overallScore`, `riskLevel`)는 2026-08-21부터 종합 점수 결합 방식은 서버 공식으로 고정됐지만(6-2 참고), 그 입력값인 권리관계·특약사항·건물상태 3개 카테고리 점수는 여전히 AI가 매번 새로 판단하는 값이라 완전한 재현성은 아닙니다(전세가율만 완전한 결정론).
 - `analyze-contract`의 "RAG"는 2026-08-28부터 OCR 텍스트와 패턴별 큐레이션 키워드를 대조해 관련 있는 패턴만 프롬프트에 넣도록 바뀌었습니다(매칭 0건이거나 OCR 텍스트가 없으면 20건 전체로 안전하게 폴백 — 3-1 3번 참고). 하지만 이는 진짜 유사도 검색이 아니라 사람이 손으로 고른 키워드의 부분 문자열 매칭이라, 키워드 목록에 없는 표현으로 위험 신호가 있으면 여전히 놓칠 수 있습니다 — 작성자가 남긴 "테이블이 커지면 검색 기반(벡터 임베딩·tsvector)으로 바꿀 것"이라는 주석은 여전히 유효한 다음 단계입니다. (2026-08-26 갱신: 이 20건 자체의 출처는 `pattern_sources` 테이블에 기록되어 더 이상 불명확하지 않습니다 — 3-1 참고.)
 - `region_stats`의 위험도는 그 달 실거래 데이터가 없는 지역의 경우 갱신되지 않고 이전 값이 그대로 유지되며, 화면에서 이를 "오래된 데이터"로 구분해 보여주지 않습니다.
 - HUG 명단-지역 매칭(`hug_defaulter_region_counts`)은 정규식 토큰 매칭이라 주소 표기가 특이한 케이스는 누락될 수 있습니다(README의 "98.9% 매칭" 같은 구체적 수치는 코드 어디에도 계산·저장되어 있지 않아 검증이 불가능합니다 — 실제 매칭률을 추적하는 로직 자체가 없습니다).
@@ -330,7 +330,7 @@ DANGER_THRESHOLD(60)와 SUCCESS_THRESHOLD(30)는 코드 주석에 따르면 개�
 - **2026-09-15 `analyze-contract` CPU 타임아웃(546) — 해결됨** — 계약서 이미지 업로드 분석이 간헐적으로 실패한다는 보고가 있어 로그를 보니 8월 28일의 Gemini 502/타임아웃과는 다른 원인인 **Edge Function CPU 시간 제한(2초) 초과(오류 코드 546)**였습니다. 원인은 magick-wasm이 이미지를 "리사이즈하기 전에" 원본 해상도로 먼저 디코드해야 한다는 점 — 서버 쪽 리사이즈 상한(`MAX_DIMENSION_PX`, 당시 2000px)을 아무리 낮춰도, 요즘 폰카메라의 12MP+ 원본을 디코드하는 비용 자체가 이미 제한을 넘었습니다(실측 `cpu_time_used` 3872ms). 서버 상수만 1500px로 낮춰봐도 2183ms로 여전히 546이 나 근본 해결이 안 됐고, **디코드 자체를 원본 해상도로 하지 않게 만들어야** 한다고 결론지었습니다. 조치: ① 브라우저에서 업로드 전에 `createImageBitmap` + canvas로 최대 1200px까지 미리 축소(`src/lib/analyzeContract.ts`), PDF 변환 렌더링 배율도 동일하게 1200px 기준으로 낮춤(`src/lib/pdfToImage.ts`), 서버 `MAX_DIMENSION_PX`도 같은 1200px로 맞춤(`_shared/imageMask.ts`) — 클라이언트·서버 두 상수는 항상 같은 값이어야 한다고 코드 주석에 명시. ② base64 인코딩을 바이트 1개씩 `String.fromCharCode`+문자열 concat 하던 것(이미지 크기에 비례해 CPU를 소모)을 청크(8192바이트) 단위 처리로 바꿔 클라이언트(`analyzeContract.ts`)·서버(`_shared/base64.ts`) 양쪽 다 최적화. ③ magick-wasm 초기화(WASM 컴파일)를 `imageMask.ts`의 `ensureInitialized()`로 명시적으로 export해 `index.ts`가 리사이즈 직전에 먼저 호출하고 `stageTimingsMs.wasmInit`으로 콜드 스타트 시간을 리사이즈 시간과 분리 측정하도록 함(진단 편의). PNG(계약서 스캔/PDF 변환본)는 무손실 유지, 카메라 JPG 사진만 JPEG(품질 0.9)로 재인코딩해 OCR 인식률 저하를 피했습니다.
 
 **코드 품질 — 중복/일관성**
-- Gemini 재시도(backoff) 로직이 `analyze-contract`/`analyze-chat`에 동일하게 복사돼 있습니다(공유 모듈로 추출되지 않음).
+- (해소) AI 호출·재시도 로직은 2026-11-10 `_shared/callVisionModel.ts`로 통합돼 `analyze-contract`/`analyze-chat`이 공유합니다. 이전에는 Gemini 재시도(backoff) 로직이 두 파일에 그대로 복사돼 있었습니다.
 - 파일→base64 변환 함수, 패턴 점수 색상 임계값(`patternTone`), 위험도 색상 hex 값이 여러 파일에 중복 정의되어 있습니다.
 - `analyses.risk_level`(영어)과 `gaslighting_checks`/`region_stats.risk_level`(한글)의 어휘가 다릅니다.
 - `/scoring`(`ScoringGuide.tsx`)의 가중치 표는 `_shared/contractScore.ts`/`_shared/riskScore.ts`의 실제 상수를 import하는 게 아니라 값을 그대로 옮겨 적은 별도 상수(`CONTRACT_WEIGHTS`, `MAP_WEIGHTS`)입니다. 두 곳의 상수가 어긋나도 빌드나 타입체크로는 잡히지 않고, 코드 주석으로 "같은 값을 유지해야 한다"고만 남겨둔 상태입니다(6-2 참고).

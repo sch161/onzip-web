@@ -20,9 +20,9 @@
 ## 요약
 
 - 업로드된 이미지의 개인정보(주민등록번호·계좌번호·전화번호·임대인/임차인 성명·당사자 개인 주소)는
-  **서버에서 CLOVA OCR로 좌표를 읽어 검은 사각형으로 가린 뒤에만** Gemini로 전달된다. 원본 이미지는
-  Gemini도, DB도, Storage도 거치지 않는다.
-- 임대인 성명은 HUG 명단 조회에만 쓰이고 Gemini에는 애초에 전달되지 않는 별도 경로로 분리돼 있다.
+  **서버에서 CLOVA OCR로 좌표를 읽어 검은 사각형으로 가린 뒤에만** AI(OpenAI)로 전달된다. 원본 이미지는
+  OpenAI도, DB도, Storage도 거치지 않는다.
+- 임대인 성명은 HUG 명단 조회에만 쓰이고 OpenAI에는 애초에 전달되지 않는 별도 경로로 분리돼 있다.
 - `analyses` 테이블에는 이미지도, OCR 원문도, 임대인 성명도 저장되지 않는다.
 - 발견된 문제 3건은 **전부 수정·배포 완료했다**: ① 분석 결과(임대인 성명 포함)가 클라이언트
   `sessionStorage`에 남는 문제, ② 디버그 전용 경로가 운영 환경에 무방비로 배포돼 있는 문제,
@@ -68,13 +68,13 @@
                                                                     │
                                             ⑤ 원본 base64 변수 폐기, 마스킹된 이미지로 교체
                                                                     │
-                                            ⑥ Gemini 호출 — "마스킹된 이미지"만 전송
+                                            ⑥ AI(OpenAI) 호출 — "마스킹된 이미지"만 전송
                                                (address/deposit/buildingType 텍스트 + 마스킹 이미지)
-                                               ──────▶ [Google Gemini API] (외부, 구글)
+                                               ──────▶ [OpenAI API] (외부, OpenAI)
                                                                     │
                                             ⑦ 임대인 성명(OCR에서 직접 읽은 값)으로 HUG 명단 조회
                                                (search_hug_defaulters_by_name RPC) ──▶ [Supabase DB]
-                                               ※ Gemini 경로와 완전히 분리된 별도 경로
+                                               ※ AI 호출 경로와 완전히 분리된 별도 경로
                                                                     │
                                             ⑧ analyses 테이블에 결과 저장 (이미지·OCR원문·임대인
                                                성명 없음) ──▶ [Supabase DB]
@@ -98,7 +98,7 @@
 - **개인정보 포함 여부**: 원본 PDF 내용이 그대로 이미지 픽셀로 옮겨질 뿐, 이 단계에서 서버로 나가는
   바이트는 하나도 없다.
 - **PDF는 어디서 이미지로 바뀌는가**: **클라이언트(브라우저)**. 서버는 PDF를 아예 받지 않는다
-  ([index.ts:462-464](../supabase/functions/analyze-contract/index.ts#L462-L464)에서
+  ([index.ts:411-413](../supabase/functions/analyze-contract/index.ts#L411-L413)에서
   `image/jpeg`·`image/png`가 아니면 즉시 400 에러).
 
 ### 0-1단계 — 업로드 전 리사이즈 + base64 인코딩 (브라우저, 2026-09-15 추가)
@@ -126,7 +126,7 @@
 ### 1단계 — 요청 수신 및 검증
 
 - **위치**: [`src/lib/analyzeContract.ts`](../src/lib/analyzeContract.ts) `analyzeContract()` →
-  [`index.ts:423-464`](../supabase/functions/analyze-contract/index.ts#L423-L464)
+  [`index.ts:372-413`](../supabase/functions/analyze-contract/index.ts#L372-L413)
 - **데이터 이동**: 브라우저 → Supabase Edge Function. `fileBase64`(0-1단계에서 리사이즈·인코딩된
   이미지의 base64), `fileMimeType`, `address`, `deposit`, `buildingType`를 JSON으로 전송.
 - **개인정보 포함 여부**: 이 시점의 `fileBase64`는 **아직 마스킹되지 않은 이미지**다(0-1단계에서
@@ -136,9 +136,9 @@
 ### 2단계 — 이미지 정규화(리사이즈)
 
 - **위치**: [`_shared/imageMask.ts`](../supabase/functions/_shared/imageMask.ts) `prepareImageForOcr()`
-  ([index.ts:482-490](../supabase/functions/analyze-contract/index.ts#L482-L490)에서 호출). 이 호출
+  ([index.ts:431-439](../supabase/functions/analyze-contract/index.ts#L431-L439)에서 호출). 이 호출
   직전에 magick-wasm 초기화(WASM 컴파일)를 콜드 스타트 시간 측정 목적으로 먼저
-  호출한다([index.ts:470-477](../supabase/functions/analyze-contract/index.ts#L470-L477),
+  호출한다([index.ts:419-426](../supabase/functions/analyze-contract/index.ts#L419-L426),
   `ensureInitialized()` — 2026-09-15부터 `imageMask.ts`의 named export로 분리됨). 데이터 이동이나
   PII 처리와는 무관한 순수 타이밍 계측용 변경이다.
 - **데이터 이동**: 서버 메모리 안에서만 처리(magick-wasm). 외부로 나가지 않음.
@@ -149,12 +149,12 @@
   [imageMask.ts:82-99](../supabase/functions/_shared/imageMask.ts#L82-L99)). 0-1단계에서 브라우저가
   이미 같은 1200px 기준으로 축소해 보내므로, 실제로 이 서버 단계에서 다시 축소되는 경우는 드물고
   대부분 PNG 재인코딩만 일어난다. **화질만 조정될 뿐 내용(텍스트)은 원본과 동일** — 이 단계에서
-  아무것도 가려지지 않는다. 실패하면 분석을 즉시 중단한다([index.ts:487-490](../supabase/functions/analyze-contract/index.ts#L487-L490)).
+  아무것도 가려지지 않는다. 실패하면 분석을 즉시 중단한다([index.ts:436-439](../supabase/functions/analyze-contract/index.ts#L436-L439)).
 
 ### 3단계 — CLOVA OCR 호출 (이 시점에 이미지가 처음 외부로 나감)
 
 - **위치**: [`_shared/clovaOcr.ts`](../supabase/functions/_shared/clovaOcr.ts) `runClovaOcr()`
-  ([index.ts:492-500](../supabase/functions/analyze-contract/index.ts#L492-L500)에서 호출)
+  ([index.ts:441-449](../supabase/functions/analyze-contract/index.ts#L441-L449)에서 호출)
 - **데이터 이동**: Supabase Edge Function → **CLOVA OCR API(네이버클라우드, 외부)**.
   [clovaOcr.ts:31-44](../supabase/functions/_shared/clovaOcr.ts#L31-L44)에서 2단계의 리사이즈된
   이미지 전체(base64)를 `X-OCR-SECRET` 헤더와 함께 전송하고, 텍스트(`inferText`)와 좌표
@@ -209,7 +209,7 @@
 ### 5단계 — 이미지 마스킹
 
 - **위치**: [`_shared/imageMask.ts`](../supabase/functions/_shared/imageMask.ts) `applyBlackBoxes()`
-  ([index.ts:520-534](../supabase/functions/analyze-contract/index.ts#L520-L534)에서 호출)
+  ([index.ts:469-483](../supabase/functions/analyze-contract/index.ts#L469-L483)에서 호출)
 - **데이터 이동**: 서버 메모리 안에서만. `boxes` 좌표에 magick-wasm으로 검은 사각형을 그려 새
   PNG를 만든다([imageMask.ts:49-64](../supabase/functions/_shared/imageMask.ts#L49-L64)).
   `boxes`가 비어 있어도(가릴 게 없어도) 반드시 이 함수를 거치게 해 "마스킹 단계 스킵" 상태가
@@ -217,41 +217,41 @@
 - **개인정보 포함 여부**: 입력은 원본 그대로지만, 출력(`maskedImageBase64`)에서는 4단계가 찾아낸
   영역이 전부 검게 덮인 상태다.
 
-### 6단계 — 원본 폐기 및 Gemini 전송
+### 6단계 — 원본 폐기 및 OpenAI 전송
 
-- **위치**: 원본 덮어쓰기는 [index.ts:536-540](../supabase/functions/analyze-contract/index.ts#L536-L540),
-  Gemini 호출은 [index.ts:576-579](../supabase/functions/analyze-contract/index.ts#L576-L579) —
+- **위치**: 원본 덮어쓰기는 [index.ts:485-489](../supabase/functions/analyze-contract/index.ts#L485-L489),
+  AI 호출 입력(프롬프트·이미지) 구성은 [index.ts:525-526](../supabase/functions/analyze-contract/index.ts#L525-L526), 실제 전송은 공통 래퍼 [callVisionModel.ts](../supabase/functions/_shared/callVisionModel.ts) —
   2026-08-28 RAG 키워드 필터링·법 조항 연동이 추가되며 두 코드가 더 이상 바로 이어져 있지 않고
-  그 사이(544-574줄)에 `contract_risk_patterns`/`legal_provisions` 조회 코드가 끼어들었다(개인정보와
+  그 사이(493-523줄)에 `contract_risk_patterns`/`legal_provisions` 조회 코드가 끼어들었다(개인정보와
   무관한 일반 지식 데이터라 이 단계 설명 자체는 달라지지 않는다).
 - **데이터 이동**: `input.fileBase64`를 마스킹된 이미지로 **덮어쓴다**
-  ([index.ts:538](../supabase/functions/analyze-contract/index.ts#L538)) — 이 시점부터 원본
+  ([index.ts:487](../supabase/functions/analyze-contract/index.ts#L487)) — 이 시점부터 원본
   base64 문자열은 `input` 객체 어디에서도 더 이상 참조되지 않는다(다른 변수에도 복사해두지 않았음,
-  GC 대상이 됨). 이후 Supabase Edge Function → **Google Gemini API(외부)**로 전송.
-- **Gemini에 최종적으로 전달되는 데이터**: `buildPrompt()`가 만든 텍스트 프롬프트(매물
+  GC 대상이 됨). 이후 Supabase Edge Function → **OpenAI API(외부)**로 전송(요청에 `store: false`를 넣어 응답 저장 옵션을 끈 상태, [callVisionModel.ts:243](../supabase/functions/_shared/callVisionModel.ts#L243)). 코드에는 `AI_PROVIDER=gemini`일 때 Google Gemini API로 보내는 경로도 남아 있으며, 그 경로도 같은 마스킹된 이미지를 받는다.
+- **OpenAI에 최종적으로 전달되는 데이터**: `buildPrompt()`가 만든 텍스트 프롬프트(매물
   주소/보증금/건물유형 + `contract_risk_patterns` 참고 사례 + 관련 법 조항 후보 — 전부 사용자가
-  입력했거나 사전에 DB에 있는 일반 지식, 개인정보 아님) **+ 마스킹된 이미지 1장**([index.ts:576-579](../supabase/functions/analyze-contract/index.ts#L576-L579)).
+  입력했거나 사전에 DB에 있는 일반 지식, 개인정보 아님) **+ 마스킹된 이미지 1장**([index.ts:525-526](../supabase/functions/analyze-contract/index.ts#L525-L526)).
   파일이 없으면(주소만으로 분석하는 경우) 이미지 파트 자체가 생략된다. **원본 이미지, OCR
-  원문, 임대인 성명 중 어느 것도 Gemini로 가지 않는다** — `landlordName`은 스키마에서 아예
-  빠져 있다([index.ts:137-138](../supabase/functions/analyze-contract/index.ts#L137-L138) 주석,
+  원문, 임대인 성명 중 어느 것도 OpenAI로 가지 않는다** — `landlordName`은 스키마에서 아예
+  빠져 있다([index.ts:135-136](../supabase/functions/analyze-contract/index.ts#L135-L136) 주석,
   스키마 `properties`에 필드 없음). 프롬프트 지침 7번이 "일부 영역이 가려져 있으니 추측하지
-  말라"고 Gemini에 명시한다([index.ts:243](../supabase/functions/analyze-contract/index.ts#L243)).
+  말라"고 모델에 명시한다([index.ts:192](../supabase/functions/analyze-contract/index.ts#L192)).
 
-### 7단계 — HUG 명단 조회 (Gemini와 완전히 분리된 경로)
+### 7단계 — HUG 명단 조회 (OpenAI와 완전히 분리된 경로)
 
-- **위치**: [index.ts:666-679](../supabase/functions/analyze-contract/index.ts#L666-L679)
+- **위치**: [index.ts:605-618](../supabase/functions/analyze-contract/index.ts#L605-L618)
 - **데이터 이동**: Supabase Edge Function → Supabase DB (`search_hug_defaulters_by_name` RPC,
   [20260721000004_add_hug_defaulter_name_search.sql](../supabase/migrations/20260721000004_add_hug_defaulter_name_search.sql)).
-- **경로 분리**: `landlordNameFromOcr`(4단계에서 CLOVA OCR로 직접 읽은 값, **Gemini 응답이 아님**)를
-  그대로 이 RPC의 인자로 넘긴다([index.ts:668-672](../supabase/functions/analyze-contract/index.ts#L668-L672)).
-  즉 "임대인 이름을 안다"는 사실 자체가 OCR → HUG 조회로 가는 한 갈래와, OCR → 마스킹 → Gemini로
+- **경로 분리**: `landlordNameFromOcr`(4단계에서 CLOVA OCR로 직접 읽은 값, **AI 응답이 아님**)를
+  그대로 이 RPC의 인자로 넘긴다([index.ts:607-611](../supabase/functions/analyze-contract/index.ts#L607-L611)).
+  즉 "임대인 이름을 안다"는 사실 자체가 OCR → HUG 조회로 가는 한 갈래와, OCR → 마스킹 → OpenAI로
   가는(이름은 안 보이는) 다른 한 갈래로 처음부터 나뉘어 있고, 둘이 다시 합쳐지는 지점은 없다.
   RPC 함수 자체도 조회만 하는 순수 SQL이라 조회한 이름을 별도로 기록하지 않는다
   ([20260721000004_add_hug_defaulter_name_search.sql:3-15](../supabase/migrations/20260721000004_add_hug_defaulter_name_search.sql#L3-L15)).
 
 ### 8단계 — DB 저장
 
-- **위치**: [index.ts:682-694](../supabase/functions/analyze-contract/index.ts#L682-L694),
+- **위치**: [index.ts:621-633](../supabase/functions/analyze-contract/index.ts#L621-L633),
   테이블 정의는 [20260718010000_create_analyses_table.sql](../supabase/migrations/20260718010000_create_analyses_table.sql)
 - **저장되는 컬럼**: `user_id, address, deposit, building_type, overall_score, risk_level,
   categories, detected_clauses, recommended_actions, ai_comment, created_at` — **이미지, OCR 원문,
@@ -260,8 +260,8 @@
 
 ### 9단계 — 클라이언트 응답 및 표시
 
-- **위치**: [index.ts:703](../supabase/functions/analyze-contract/index.ts#L703) → [`src/pages/Analysis.tsx`](../src/pages/Analysis.tsx)
-- **데이터 이동**: Supabase Edge Function → 브라우저. `result`(Gemini 결과 + 주입된 `landlordName`
+- **위치**: [index.ts:642](../supabase/functions/analyze-contract/index.ts#L642) → [`src/pages/Analysis.tsx`](../src/pages/Analysis.tsx)
+- **데이터 이동**: Supabase Edge Function → 브라우저. `result`(AI 결과 + 주입된 `landlordName`
   + `hugDefaulterMatch`)를 그대로 JSON으로 반환.
 - **개인정보 포함 여부**: `landlordName`이 응답에 포함된다 — 사용자 본인이 올린 자기 계약서의
   임대인 이름을 화면에 보여주는 것 자체는 정상 기능이다. 이 값이 `sessionStorage`에 남던 문제는
@@ -271,28 +271,28 @@
 
 ### 3.1 문제없음
 
-- **DB 저장** — `analyses` insert 컬럼 전수 확인([index.ts:683-694](../supabase/functions/analyze-contract/index.ts#L683-L694)):
+- **DB 저장** — `analyses` insert 컬럼 전수 확인([index.ts:622-633](../supabase/functions/analyze-contract/index.ts#L622-L633)):
   이미지·OCR 원문·`landlordName`·HUG 매치 결과 어느 것도 포함되지 않음. `categories`/`detected_clauses`는
-  Gemini가 **마스킹된 이미지만 보고** 생성한 값이라 구조적으로 원본 PII를 담을 수 없다(가려진
-  픽셀은 Gemini도 못 읽는다).
+  AI가 **마스킹된 이미지만 보고** 생성한 값이라 구조적으로 원본 PII를 담을 수 없다(가려진
+  픽셀은 AI도 못 읽는다).
 - **서버 로그** — `analyze-contract`와 `_shared/*` 전체의 `console.log`/`console.error` 호출을
   전수 확인. OCR 필드 배열(`ocrFields`)이나 필드 텍스트(`.text`)를 직접 찍는 곳은 없음. 유일하게
-  구조화된 값을 찍는 곳은 `stats`([index.ts:518](../supabase/functions/analyze-contract/index.ts#L518))이며,
+  구조화된 값을 찍는 곳은 `stats`([index.ts:467](../supabase/functions/analyze-contract/index.ts#L467))이며,
   이 타입은 전부 숫자 필드라 문자열(이름/번호)이 애초에 들어갈 수 없음
   ([piiMask.ts:15-27](../supabase/functions/_shared/piiMask.ts#L15-L27)). `landlordNameFromOcr`가
   로그에 찍히는 곳은 전무.
 - **에러 응답** — `jsonResponse(...)` 호출 전수 확인. 전부 하드코딩된 고정 한국어 문자열이거나 최종
-  `result`(Gemini 결과) 뿐. `err.message`나 CLOVA 응답 바디가 클라이언트 응답에 섞이는 경로는 없음.
+  `result`(AI 결과) 뿐. `err.message`나 CLOVA 응답 바디가 클라이언트 응답에 섞이는 경로는 없음.
   (`debugMask` 응답도 있었으나 3.2의 수정으로 완전히 제거됨.)
 - **원본 이미지 잔존 여부** — Storage 버킷 사용 없음(`supabase/config.toml`의
   `[storage.buckets.*]`는 전부 주석 처리된 기본 스캐폴드). 원본 base64는 `input.fileBase64`
-  재할당([index.ts:538](../supabase/functions/analyze-contract/index.ts#L538))으로 더 이상
+  재할당([index.ts:487](../supabase/functions/analyze-contract/index.ts#L487))으로 더 이상
   참조되지 않고, 별도 변수에 복사해두지도 않았다.
 - **클라이언트 원본 이미지/PDF 잔존 여부** — `Home.tsx`의 `file`/`address`/`deposit` 등은 전부
   일반 `useState`(컴포넌트 언마운트 시 소멸, `localStorage`/`sessionStorage` 미사용, 2026-09-18
   재확인). 세션스토리지를 쓰는 `useSessionState` 훅은 [`Cure.tsx`](../src/pages/Cure.tsx)(AI 상담
   채팅)에서만 쓰이고 계약서 분석 플로우와는 무관함을 재확인.
-- **마케팅 문구 검증** — [Home.tsx:310-312](../src/pages/Home.tsx#L310-L312)의 "업로드한 계약서는
+- **마케팅 문구 검증** — [Home.tsx:313-316](../src/pages/Home.tsx#L313-L316)의 "업로드한 계약서는
   분석 후 안전하게 삭제됩니다"는 정확히는 "애초에 저장하지 않는다"이며, 실제 코드 동작과 일치함.
 - **HUG 명단 조회 권한** — `search_hug_defaulters_by_name` RPC가 `anon`에도 EXECUTE 권한이 있는 건
   처음엔 의심했지만, `hug_defaulters` 테이블의 RLS 정책 자체가 "공개 명단이므로 조회는 누구나
@@ -301,7 +301,7 @@
 ### 3.2 발견된 문제 — 수정 완료
 
 1. **`landlordName`이 브라우저 `sessionStorage`에 평문 저장됨. → 수정 완료.**
-   기존 문제: `navState`(Gemini 응답 + 주입된 `landlordName`)를 통째로
+   기존 문제: `navState`(AI 응답 + 주입된 `landlordName`)를 통째로
    `sessionStorage.setItem('onzip:lastAnalysis', JSON.stringify(navState))`로 저장하고 있었다.
    탭을 닫으면 사라지고 서버로 다시 전송되진 않지만, 탭이 열려 있는 동안은 같은 오리진의 다른
    스크립트(XSS 발생 시)나 공용 PC의 다음 사용자가 개발자도구(Application → Session Storage)로
@@ -351,7 +351,7 @@
 1. **CLOVA 에러 응답 바디 최대 300자가 서버 로그에 남을 수 있음.**
    [clovaOcr.ts:50](../supabase/functions/_shared/clovaOcr.ts#L50)에서
    `res.text()`의 앞 300자를 그대로 `Error` 메시지에 넣고, 이게 `console.error`로 로그에 남는다
-   ([index.ts:498](../supabase/functions/analyze-contract/index.ts#L498)). 지금까지 실제로 관찰된
+   ([index.ts:447](../supabase/functions/analyze-contract/index.ts#L447)). 지금까지 실제로 관찰된
    CLOVA 에러 응답은 `{code, message, path, traceId, timestamp}` 형태의 API 메타데이터뿐이라 PII가
    섞인 적은 없지만, 이건 CLOVA가 앞으로도 그럴 것이라는 우리 코드의 구조적 보장이 아니라 관찰에
    근거한 판단이다. (참고: 이 값은 클라이언트 응답에는 절대 안 나감 — 3.1 참고. 서버 로그는 Supabase
@@ -371,10 +371,10 @@
   OCR로 좌표를 읽어야 하므로, 원본(리사이즈만 된) 이미지 전체가 네이버클라우드의 CLOVA OCR
   엔드포인트로 전송되는 것은 구조적으로 피할 수 없다. CLOVA 측의 데이터 보관/처리 정책은 이 코드베이스가
   통제할 수 있는 범위 밖이다.
-- **매물 주소·보증금은 Google Gemini API(외부)로 전송된다.** 이건 위험도 분석의 핵심 입력이라
+- **매물 주소·보증금은 OpenAI API(외부)로 전송된다.** 이건 위험도 분석의 핵심 입력이라
   의도적으로 마스킹 대상에서 제외했다(요청사항). 매물 주소 자체는 계약 상대방을 특정하는 정보는
   아니지만, 외부 LLM API로 나간다는 사실은 명시해둔다.
-  Google의 API 데이터 처리 정책 역시 이 코드베이스 밖의 영역이다.
+  OpenAI 측의 데이터 처리 정책은 아직 확인하지 않았다(확인 후 보완 예정).
 - **마스킹은 OCR과 규칙 기반 판정에 의존하므로 완벽하지 않다.** 지금까지 실제 표준임대차계약서로
   테스트하며 라벨 오탐(조항 본문 오마스킹) 2건, 미탐(성명 라벨, 개인 주소) 2건을 발견해 고쳤다.
   구조는 "OCR 실패·필드 0개·마스킹 자체 실패 시 분석을 중단"하는 방식으로 fail-safe하게 설계했지만
