@@ -6,11 +6,9 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { analyzePsychGuard, type PsychGuardGrade, type PsychGuardResult } from '../_shared/psychGuard.ts'
+import { callVisionModel, isVisionProviderConfigured, missingKeyName } from '../_shared/callVisionModel.ts'
 
-const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY')
-// Pinned model versions keep getting retired/restricted (2.0-flash, then 2.5-flash for new
-// accounts) — "-latest" is a Google-managed alias that stays current automatically.
-const GEMINI_MODEL = Deno.env.get('GEMINI_MODEL') ?? 'gemini-flash-latest'
+// AI 호출(Gemini/OpenAI 분기, 모델·키·재시도)은 _shared/callVisionModel.ts가 담당한다.
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -106,56 +104,7 @@ interface GeminiResult {
   suggestedResponse: string
 }
 
-// 429(RESOURCE_EXHAUSTED)/503(UNAVAILABLE)는 대개 일시적인 과부하/쿼터 순간 스파이크라
-// 잠깐 기다렸다 다시 보내면 성공하는 경우가 많다. 그 외 상태 코드(4xx 요청 오류 등)는
-// 재시도해도 똑같이 실패할 뿐이므로 즉시 반환한다.
-const GEMINI_RETRYABLE_STATUSES = new Set([429, 503])
-const GEMINI_RETRY_DELAYS_MS = [1000, 3000]
-
-interface GeminiCallResult {
-  ok: boolean
-  status: number
-  bodyText: string
-}
-
-/** Gemini generateContent 호출. 429/503 에러 응답뿐 아니라 응답 자체가 늦어져 타임아웃(AbortError)
- *  나는 경우도 지수 백오프(1초, 3초)로 최대 2회 더 재시도한다. 마지막 시도까지 타임아웃이면
- *  AbortError를 그대로 던지고(호출자가 "시간 초과" 메시지 처리), 마지막 시도까지 429/503이면
- *  그 응답을 그대로 반환한다(호출자가 사용자 에러 처리). */
-async function callGeminiWithRetry(url: string, requestBody: unknown, timeoutMs: number): Promise<GeminiCallResult> {
-  for (let attempt = 0; ; attempt++) {
-    const isLastAttempt = attempt >= GEMINI_RETRY_DELAYS_MS.length
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), timeoutMs)
-    let res: Response
-    try {
-      res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody),
-        signal: controller.signal,
-      })
-    } catch (err) {
-      clearTimeout(timer)
-      const isTimeout = err instanceof Error && err.name === 'AbortError'
-      if (!isTimeout || isLastAttempt) throw err
-      const delayMs = GEMINI_RETRY_DELAYS_MS[attempt]
-      console.error(`Gemini API timed out after ${timeoutMs}ms, retrying in ${delayMs}ms (attempt ${attempt + 2}/${GEMINI_RETRY_DELAYS_MS.length + 1})`)
-      await new Promise((resolve) => setTimeout(resolve, delayMs))
-      continue
-    }
-    clearTimeout(timer)
-
-    if (res.ok || !GEMINI_RETRYABLE_STATUSES.has(res.status) || isLastAttempt) {
-      const bodyText = await res.text()
-      return { ok: res.ok, status: res.status, bodyText }
-    }
-
-    const delayMs = GEMINI_RETRY_DELAYS_MS[attempt]
-    console.error(`Gemini API ${res.status}, retrying in ${delayMs}ms (attempt ${attempt + 2}/${GEMINI_RETRY_DELAYS_MS.length + 1})`)
-    await new Promise((resolve) => setTimeout(resolve, delayMs))
-  }
-}
+// Gemini/OpenAI 호출·재시도 로직은 _shared/callVisionModel.ts로 옮겼다(기존 Gemini 재시도 동작 그대로).
 
 async function resolveUserId(req: Request): Promise<string | null> {
   const authHeader = req.headers.get('Authorization')
@@ -178,8 +127,8 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: 'Method not allowed' }, 405)
   }
 
-  if (!GEMINI_API_KEY) {
-    console.error('GEMINI_API_KEY is not set in Supabase Secrets')
+  if (!isVisionProviderConfigured()) {
+    console.error(`${missingKeyName()} is not set in Supabase Secrets`)
     return jsonResponse({ error: 'AI 분석 기능이 설정되지 않았습니다. 관리자에게 문의하세요.' }, 500)
   }
 
@@ -196,36 +145,26 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: '분석할 문자 내용 또는 캡처 이미지를 입력해주세요.' }, 400)
   }
 
-  const parts: Record<string, unknown>[] = [{ text: buildPrompt(message, hasImage) }]
-  if (hasImage) {
-    parts.push({ inline_data: { mime_type: input.fileMimeType, data: input.fileBase64 } })
-  }
+  const prompt = buildPrompt(message, hasImage)
+  const image = hasImage ? { mimeType: input.fileMimeType!, base64: input.fileBase64! } : undefined
 
   const startedAt = Date.now()
 
   try {
-    const { ok, status, bodyText } = await callGeminiWithRetry(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        contents: [{ role: 'user', parts }],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema: ANALYSIS_RESPONSE_SCHEMA,
-        },
-      },
-      28000,
-    )
+    const { ok, status, text } = await callVisionModel({
+      prompt,
+      image,
+      schema: ANALYSIS_RESPONSE_SCHEMA,
+      schemaName: 'chat_analysis',
+      timeoutMs: 28000,
+    })
 
     if (!ok) {
-      console.error(`Gemini API error ${status} after retries (${Date.now() - startedAt}ms)`, bodyText.slice(0, 500))
+      console.error(`AI API error ${status} after retries (${Date.now() - startedAt}ms)`)
       return jsonResponse({ error: 'AI 분석 요청에 실패했습니다. 잠시 후 다시 시도해주세요.' }, 502)
     }
 
-    const geminiJson = JSON.parse(bodyText)
-    const text: string | undefined = geminiJson.candidates?.[0]?.content?.parts?.[0]?.text
-
     if (!text) {
-      console.error('Empty Gemini response', JSON.stringify(geminiJson).slice(0, 500))
       return jsonResponse({ error: 'AI로부터 응답을 받지 못했습니다.' }, 502)
     }
 

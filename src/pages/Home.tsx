@@ -23,7 +23,7 @@ function formatNewsDate(value: string): string {
 const TRUST_FACTS = [
   {
     icon: "sparkles",
-    title: "Google Gemini AI 분석",
+    title: "OpenAI AI 분석",
     body: "실제 AI 모델이 계약서 조항을 직접 읽고 위험 요소를 짚어드려요.",
   },
   {
