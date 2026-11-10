@@ -67,8 +67,10 @@ export default function Privacy() {
             </p>
             <ul className="flex flex-col gap-1">
               <li>
-                · <span className="font-medium text-text-dark">Google Gemini API (Google LLC)</span> — 업로드된
-                계약서/등기부등본 및 마음 상담 채팅 내용을 AI 위험도 분석 목적으로 전달
+                · <span className="font-medium text-text-dark">OpenAI API (OpenAI)</span> — AI 위험도 분석 목적으로
+                전달합니다. 계약서/등기부등본은 개인정보 부분을 가린 이미지와 입력하신 매물 주소·보증금·건물 유형만
+                전달하고, 마음 상담은 입력한 대화 내용과 첨부한 캡처 이미지를 가림 처리 없이 전달합니다. 응답 저장
+                옵션을 끈 상태로 호출합니다.
               </li>
               <li>
                 · <span className="font-medium text-text-dark">네이버(NAVER Corp.)</span> — 매물 주소 등 부동산
