@@ -29,8 +29,12 @@ export interface VisionCallOutput {
 
 // ── 설정 ────────────────────────────────────────────────────────────────────────
 
-// 재시도 횟수·타임아웃은 여기서 바꾼다.
-const OPENAI_TIMEOUT_MS = 28000
+// 재시도 횟수·대기 시간·타임아웃 기본값은 여기서 바꾼다.
+// 타임아웃은 OPENAI_TIMEOUT_MS 환경변수로도 바꿀 수 있다(기본 45초). Supabase Edge Function의
+// 요청 idle timeout이 150초라서(공식 문서), 아무리 올려도 120초를 넘기지 못하게 막아 둔다.
+const OPENAI_DEFAULT_TIMEOUT_MS = 45000
+const OPENAI_MAX_TIMEOUT_MS = 120000
+/** 429/5xx 응답에 대한 재시도 횟수. 타임아웃은 재시도하지 않는다(이미 오래 기다린 요청을 또 기다리면 총 시간이 폭증). */
 const OPENAI_MAX_RETRIES = 1
 const OPENAI_RETRY_DELAY_MS = 1000
 /** 추론 토큰 + 출력 토큰 합계 상한. 걸려서 응답이 잘리면(incomplete) 에러로 처리한다. */
@@ -39,7 +43,11 @@ const OPENAI_MAX_OUTPUT_TOKENS = 8000
 const OPENAI_DEFAULT_MODEL = 'gpt-6.1-sol'
 const OPENAI_DEFAULT_EFFORT = 'low'
 const OPENAI_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max'])
-const OPENAI_RETRYABLE_STATUSES = new Set([429, 503])
+/** 서비스 티어는 이 두 값만 요청에 싣는다. 비어 있으면 아예 보내지 않아 Standard로 호출된다. */
+const OPENAI_SERVICE_TIERS = new Set(['fast', 'ultrafast'])
+function isRetryableOpenAiStatus(status: number): boolean {
+  return status === 429 || status >= 500
+}
 
 const GEMINI_RETRYABLE_STATUSES = new Set([429, 503])
 const GEMINI_RETRY_DELAYS_MS = [1000, 3000]
@@ -175,17 +183,44 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+function pickOpenAiTimeoutMs(): number {
+  const raw = Deno.env.get('OPENAI_TIMEOUT_MS')?.trim()
+  if (!raw) return OPENAI_DEFAULT_TIMEOUT_MS
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) {
+    console.warn(`Invalid OPENAI_TIMEOUT_MS "${raw.slice(0, 20)}", using ${OPENAI_DEFAULT_TIMEOUT_MS}`)
+    return OPENAI_DEFAULT_TIMEOUT_MS
+  }
+  if (n > OPENAI_MAX_TIMEOUT_MS) {
+    console.warn(`OPENAI_TIMEOUT_MS ${n} exceeds ${OPENAI_MAX_TIMEOUT_MS}, clamping`)
+    return OPENAI_MAX_TIMEOUT_MS
+  }
+  return Math.floor(n)
+}
+
+/** 없거나 비어 있으면 undefined(= service_tier를 요청에 넣지 않음). fast/ultrafast 외의 값은 무시하고 경고만 남긴다. */
+function pickOpenAiServiceTier(): string | undefined {
+  const raw = Deno.env.get('OPENAI_SERVICE_TIER')?.trim().toLowerCase()
+  if (!raw) return undefined
+  if (OPENAI_SERVICE_TIERS.has(raw)) return raw
+  console.warn(`Ignoring unsupported OPENAI_SERVICE_TIER "${raw.slice(0, 20)}" (only fast/ultrafast are sent)`)
+  return undefined
+}
+
 function pickOpenAiEffort(): string {
   const raw = Deno.env.get('OPENAI_REASONING_EFFORT')?.trim().toLowerCase()
   return raw && OPENAI_EFFORTS.has(raw) ? raw : OPENAI_DEFAULT_EFFORT
 }
 
-/** OpenAI Responses API 호출. 429/503과 타임아웃은 OPENAI_MAX_RETRIES 만큼 재시도한다. 마지막 시도까지
- *  타임아웃이면 AbortError를 그대로 던진다(호출자가 "시간 초과" 메시지 처리 — Gemini 경로와 같다). */
+/** OpenAI Responses API 호출. 429/5xx 응답만 OPENAI_MAX_RETRIES 만큼 재시도한다. 타임아웃(AbortError)은
+ *  재시도 없이 그대로 던진다(호출자가 "시간 초과" 메시지 처리 — Gemini 경로와 같다). service_tier 때문에
+ *  4xx로 거절돼도 티어를 빼고 자동으로 다시 부르지 않는다(비용/속도 설정이 조용히 바뀌지 않도록). */
 async function callOpenAi(input: VisionCallInput): Promise<VisionCallOutput> {
   const apiKey = Deno.env.get('OPENAI_API_KEY')
   const model = Deno.env.get('OPENAI_MODEL') ?? OPENAI_DEFAULT_MODEL
   const effort = pickOpenAiEffort()
+  const timeoutMs = pickOpenAiTimeoutMs()
+  const serviceTier = pickOpenAiServiceTier()
 
   const content: Record<string, unknown>[] = [{ type: 'input_text', text: input.prompt }]
   if (input.image) {
@@ -203,6 +238,7 @@ async function callOpenAi(input: VisionCallInput): Promise<VisionCallOutput> {
     },
     reasoning: { effort },
     max_output_tokens: OPENAI_MAX_OUTPUT_TOKENS,
+    ...(serviceTier ? { service_tier: serviceTier } : {}),
     // Responses API는 기본적으로 응답을 OpenAI 쪽에 저장한다. 계약서/대화 내용이 남지 않도록 끈다.
     store: false,
   })
@@ -211,7 +247,7 @@ async function callOpenAi(input: VisionCallInput): Promise<VisionCallOutput> {
     const isLastAttempt = attempt >= OPENAI_MAX_RETRIES
     const startedAt = Date.now()
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS)
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
     let res: Response
     try {
       res = await fetch('https://api.openai.com/v1/responses', {
@@ -222,15 +258,14 @@ async function callOpenAi(input: VisionCallInput): Promise<VisionCallOutput> {
       })
     } catch (err) {
       clearTimeout(timer)
-      const isTimeout = err instanceof Error && err.name === 'AbortError'
-      if (!isTimeout || isLastAttempt) throw err
-      console.error(`OpenAI API timed out after ${OPENAI_TIMEOUT_MS}ms, retrying in ${OPENAI_RETRY_DELAY_MS}ms (attempt ${attempt + 2}/${OPENAI_MAX_RETRIES + 1})`)
-      await sleep(OPENAI_RETRY_DELAY_MS)
-      continue
+      if (err instanceof Error && err.name === 'AbortError') {
+        console.error(`OpenAI API timed out after ${timeoutMs}ms (attempt ${attempt + 1}/${OPENAI_MAX_RETRIES + 1}, service_tier=${serviceTier ?? 'default'}), not retrying`)
+      }
+      throw err
     }
     clearTimeout(timer)
 
-    if (!res.ok && OPENAI_RETRYABLE_STATUSES.has(res.status) && !isLastAttempt) {
+    if (!res.ok && isRetryableOpenAiStatus(res.status) && !isLastAttempt) {
       await res.body?.cancel()
       console.error(`OpenAI API ${res.status}, retrying in ${OPENAI_RETRY_DELAY_MS}ms (attempt ${attempt + 2}/${OPENAI_MAX_RETRIES + 1})`)
       await sleep(OPENAI_RETRY_DELAY_MS)
@@ -248,7 +283,10 @@ async function callOpenAi(input: VisionCallInput): Promise<VisionCallOutput> {
     if (!res.ok) {
       // 오류 본문 전체를 남기지 않고 type/code/message만 남긴다(요청 내용이 섞여 들어올 수 있어서).
       const e = json.error ?? {}
-      console.error(`OpenAI API error ${res.status} after retries (${Date.now() - startedAt}ms)`, JSON.stringify({ type: e.type, code: e.code, message: e.message }).slice(0, 500))
+      console.error(
+        `OpenAI API error ${res.status} (attempt ${attempt + 1}/${OPENAI_MAX_RETRIES + 1}, service_tier=${serviceTier ?? 'default'}, ${Date.now() - startedAt}ms)`,
+        JSON.stringify({ type: e.type, code: e.code, param: e.param, message: e.message }).slice(0, 500),
+      )
       return { ok: false, status: res.status }
     }
 
@@ -259,6 +297,9 @@ async function callOpenAi(input: VisionCallInput): Promise<VisionCallOutput> {
         model: json.model ?? model,
         effort,
         status: json.status,
+        service_tier_requested: serviceTier ?? 'default',
+        service_tier_used: json.service_tier,
+        attempt: attempt + 1,
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
         reasoning_tokens: usage.output_tokens_details?.reasoning_tokens,
