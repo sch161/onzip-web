@@ -10,12 +10,12 @@
 
 ### 1. AI 계약서 안전 스캔
 
-계약서 이미지·PDF를 업로드하면 Gemini API가 내용을 분석합니다. 보증금, 특약사항 등 핵심 정보는
+계약서 이미지·PDF를 업로드하면 OpenAI API가 내용을 분석합니다. 보증금, 특약사항 등 핵심 정보는
 멀티모달 모델이 이미지에서 직접 인식하며, 그 전 단계로 업로드된 이미지의 개인정보는 자동으로
 가려집니다.
 
 - **업로드 전 개인정보 자동 마스킹**: CLOVA OCR로 이미지에서 주민등록번호·계좌번호·전화번호·
-  임대인/임차인 성명·당사자 개인 주소의 위치(좌표)를 찾아 검은 사각형으로 가린 뒤에만 Gemini로
+  임대인/임차인 성명·당사자 개인 주소의 위치(좌표)를 찾아 검은 사각형으로 가린 뒤에만 OpenAI로
   전송합니다. 매물 주소·보증금·특약사항 등 위험 분석에 필요한 내용은 가리지 않으며, OCR이 실패하거나
   마스킹을 보장할 수 없으면 분석 자체를 중단합니다(원본이 새어나가지 않는 fail-safe 구조). 전체
   데이터 흐름은 [`docs/PRIVACY_FLOW.md`](docs/PRIVACY_FLOW.md)에 단계별로 정리돼 있습니다.
@@ -29,8 +29,8 @@
 - **HUG 상습 채무불이행자 실명단 대조**: 마스킹 전 CLOVA OCR로 읽은 임대인 이름을
   `hug_defaulters`(HUG 공개 명단, 주 1회 자동 동기화)와 trigram 유사도 검색으로 직접 대조 — 일치 시
   강한 경고 배너로 표시 (AI 추정이 아닌 공식 데이터 기반 사실 확인. 이 이름은 HUG 조회 전용이며
-  Gemini에는 전달되지 않음)
-- **종합 점수는 서버가 가중평균으로 계산**: Gemini는 권리관계·특약사항·건물상태 3개 항목만 채점하고,
+  AI 제공자(OpenAI)에는 전달되지 않음)
+- **종합 점수는 서버가 가중평균으로 계산**: AI는 권리관계·특약사항·건물상태 3개 항목만 채점하고,
   전세가율은 서버가 계약서 주소·보증금을 국토교통부 실거래가와 직접 비교해 계산합니다. 종합 점수는
   이 4개 항목(권리관계 35% · 특약사항 30% · 전세가율 25% · 건물상태 10%)의 가중평균으로 코드가
   산출하므로 같은 계약서를 다시 분석해도 항목 결합 방식은 항상 동일하며, 대항력 악용·신탁 부동산
@@ -44,16 +44,16 @@
   가중치를 재정규화합니다.
 - 위험/주의/안전 태그가 붙은 조항별 상세 설명
 - AI 추천 조치(방어 특약 문구 포함 체크리스트) 및 종합 코멘트 제공
-- Gemini 서버 과부하(503)·할당량 초과(429) 시 자동 재시도(지수 백오프)로 안정성 확보
+- OpenAI가 429(할당량·속도 제한)나 5xx(서버 오류)를 반환하면 1회 자동 재시도합니다. 타임아웃(기본 45초)은 재시도하지 않고 바로 오류로 안내합니다. (자세한 설정은 아래 "AI 제공자 설정" 참고)
 
 ### 2. 마음 상담 (부동산 가스라이팅 탐지 AI)
 
-중개인·집주인에게 받은 문자·카톡 내용(텍스트 또는 캡처 이미지)을 분석합니다.
+중개인·집주인에게 받은 문자·카톡 내용(텍스트 또는 캡처 이미지)을 분석합니다. 계약서와 달리 첨부한 캡처 이미지는 마스킹 없이 그대로 AI 제공자(OpenAI)로 전송됩니다.
 
 - **최종 위험도 판정은 규칙 기반 키워드 매칭**: Robert Cialdini(1984, *Influence: The Psychology
   of Persuasion*)의 설득의 6원칙(희소성·권위·사회적 증거·상호성·호감·일관성) 기준으로 분류한
   카테고리별 키워드가 대화 텍스트에 등장하는지 매칭해 점수화하고, 등급(안전/주의/위험)을 매깁니다.
-  Gemini 호출은 유지하되 최종 위험도(`riskLevel`)는 이 규칙 기반 결과를 우선합니다 — AI 주관적
+  AI 호출은 유지하되 최종 위험도(`riskLevel`)는 이 규칙 기반 결과를 우선합니다 — AI 주관적
   판단 대신 검증 가능한 심리학 이론 기반 규칙으로 신뢰도를 높였습니다.
 - 재촉, 허위정보 주입, 신뢰 유도 등 패턴별 확신도(%) 표시
 - 대화 위험도 게이지 및 종합 신뢰도 표시
@@ -98,7 +98,7 @@ Supabase Auth 기반 이메일 인증 + **Google, Kakao 소셜 로그인**
 | 데이터베이스 | Supabase (PostgreSQL), Row Level Security        |
 | 인증         | Supabase Auth                                    |
 | 스케줄링     | Supabase pg_cron, pg_net                         |
-| AI           | Google Gemini API (`gemini-2.5-flash`, 멀티모달) |
+| AI           | OpenAI API (Responses API, 기본 `gpt-6.1-sol`, 멀티모달). `AI_PROVIDER=gemini`로 Google Gemini API(기본 `gemini-flash-latest`)로 전환 가능 |
 | OCR          | 네이버클라우드 CLOVA OCR (개인정보 위치 검출용)  |
 | 이미지 처리  | magick-wasm(서버 마스킹), pdf.js(클라이언트 PDF→이미지 변환) |
 | 지도         | Kakao Maps JavaScript SDK                        |
@@ -110,7 +110,8 @@ Supabase Auth 기반 이메일 인증 + **Google, Kakao 소셜 로그인**
 
 | API                           | 용도                                                              | 발급처                                                                                                      |
 | ----------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| **Google Gemini API**         | 계약서 이미지/PDF 분석, 위험 조항 판별, 가스라이팅 대화 패턴 분석 | [Google AI Studio](https://aistudio.google.com)                                                             |
+| **OpenAI API**                | 계약서 이미지/PDF 분석, 위험 조항 판별, 가스라이팅 대화 패턴 분석 (현재 운영) | [OpenAI Platform](https://platform.openai.com)                                                              |
+| **Google Gemini API**         | 위와 같은 분석의 대체 경로 (`AI_PROVIDER=gemini`, 기본값)         | [Google AI Studio](https://aistudio.google.com)                                                             |
 | **네이버클라우드 CLOVA OCR**  | 업로드된 계약서 이미지에서 개인정보 위치(좌표) 검출 → 마스킹 처리 | [네이버클라우드 플랫폼](https://www.ncloud.com)                                                             |
 | **네이버 검색 API (뉴스)**    | 최근 전세사기 뉴스 조회, 지역별 "전세사기" 언급 빈도 집계         | [네이버 개발자센터](https://developers.naver.com)                                                           |
 | **국토교통부 실거래가 API**   | 아파트·연립다세대 매매/전월세 실거래가 → 지역별 전세가율 계산     | [공공데이터포털](https://www.data.go.kr)                                                                    |
@@ -145,7 +146,7 @@ Supabase Auth 기반 이메일 인증 + **Google, Kakao 소셜 로그인**
 
 | 함수명              | 역할                                                                               | 실행 방식           |
 | ------------------- | ---------------------------------------------------------------------------------- | ------------------- |
-| `analyze-contract`  | CLOVA OCR로 계약서 이미지의 개인정보를 마스킹한 뒤 RAG(위험 패턴 DB)와 함께 Gemini API로 분석, HUG 명단 실명 대조 | 사용자 요청 시      |
+| `analyze-contract`  | CLOVA OCR로 계약서 이미지의 개인정보를 마스킹한 뒤 RAG(위험 패턴 DB)와 함께 AI(OpenAI 또는 Gemini, `AI_PROVIDER`로 선택)로 분석, HUG 명단 실명 대조 | 사용자 요청 시      |
 | `analyze-chat`      | 가스라이팅 대화 텍스트/이미지 분석                                                 | 사용자 요청 시      |
 | `fetch-market-data` | 국토부 실거래가 조회 → 전세가율 계산                                               | pg_cron 배치 (자동) |
 | `fetch-region-buzz` | 네이버 뉴스 지역별 언급 건수 집계                                                  | pg_cron 배치 (자동) |
@@ -167,6 +168,8 @@ VITE_KAKAO_MAP_KEY=
 ### 백엔드 (Supabase Secrets)
 
 ```
+AI_PROVIDER=          # openai | gemini (비우면 gemini)
+OPENAI_API_KEY=
 GEMINI_API_KEY=
 NAVER_CLIENT_ID=
 NAVER_CLIENT_SECRET=
@@ -175,6 +178,27 @@ CLOVA_OCR_INVOKE_URL=
 CLOVA_OCR_SECRET_KEY=
 ```
 
+### AI 제공자 설정
+
+`analyze-contract`와 `analyze-chat`은 공통 래퍼 `supabase/functions/_shared/callVisionModel.ts`로 AI를 호출합니다. `AI_PROVIDER` 시크릿으로 제공자를 고르며, **코드의 기본값은 `gemini`이고 현재 운영은 `openai`로 설정돼 있습니다.** 아래 값은 모두 Supabase Secrets이고, 비워도 기본값으로 동작합니다(키 제외).
+
+| 이름 | 기본값 | 설명 |
+| ---- | ------ | ---- |
+| `AI_PROVIDER` | `gemini` | `openai` 또는 `gemini`. 다른 값이면 경고 로그를 남기고 `gemini`로 동작 |
+| `OPENAI_API_KEY` | 없음 | `AI_PROVIDER=openai`일 때 필수. 없으면 "AI 분석 기능이 설정되지 않았습니다" 오류 |
+| `OPENAI_MODEL` | `gpt-6.1-sol` | 호출할 OpenAI 모델 |
+| `OPENAI_REASONING_EFFORT` | `low` | `low` · `medium` · `high` · `xhigh` · `max` 중 하나. 다른 값이면 기본값 |
+| `OPENAI_TIMEOUT_MS` | `45000` | OpenAI 요청 1회의 타임아웃(ms). 최대 120000으로 제한 |
+| `OPENAI_SERVICE_TIER` | 비움(미사용) | 비우면 요청에 서비스 티어를 넣지 않음(Standard). `fast` 또는 `ultrafast`만 전송하고 다른 값은 무시. 티어 때문에 요청이 거절돼도 티어 없이 자동 재호출하지 않음 |
+| `GEMINI_API_KEY` | 없음 | `AI_PROVIDER=gemini`일 때 필수 |
+| `GEMINI_MODEL` | `gemini-flash-latest` | 호출할 Gemini 모델 |
+
+- **OpenAI 호출 방식**: `fetch`로 Responses API(`POST /v1/responses`)를 직접 호출합니다(SDK 미사용). 응답은 구조화 출력(`json_schema`, `strict: true`)으로 받으며, 스키마는 기존 Gemini용 스키마를 코드로 변환해 같은 필드 구조를 유지합니다. 이미지는 `input_image`(data URL)로 보냅니다.
+- **고정 설정**: 출력 토큰 상한은 `max_output_tokens: 8000`(추론 토큰 포함)이며, 상한에 걸려 응답이 잘리면 오류로 처리합니다. 응답 저장 옵션은 `store: false`로 끈 상태로 호출합니다.
+- **재시도 정책**: OpenAI는 429와 5xx 응답일 때만 1초 뒤 1회 재시도하고, 타임아웃은 재시도하지 않습니다. (Gemini 경로는 기존대로 429·503과 타임아웃을 1초·3초 간격으로 최대 2회 재시도합니다.)
+- **사용량 로그**: 호출마다 `[openai] usage` 로그에 입력·출력·추론·캐시 토큰 수, 요청/실제 서비스 티어, 시도 횟수를 남깁니다. 프롬프트와 이미지 내용은 남기지 않습니다.
+- **Gemini로 되돌리기**: Supabase Secrets에서 `AI_PROVIDER`를 `gemini`로 바꾸거나 삭제하고(`GEMINI_API_KEY`가 설정돼 있어야 함), `node scripts/check-ai-functions.mjs`(`SUPABASE_ANON_KEY` 환경변수 필요)로 두 함수가 정상 응답하는지 확인합니다. 두 경로가 같은 응답 스키마를 쓰므로 프론트엔드 수정은 필요 없습니다.
+
 ### HUG 크롤러 (GitHub Actions Secrets, `scripts/sync-hug-defaulters.mjs`용)
 
 ```
@@ -182,7 +206,7 @@ SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
 ```
 
-> ⚠️ Gemini, 네이버, 국토부 키는 절대 프론트엔드(`VITE_` 접두사)에 넣지 않고 Supabase Secrets로만 관리합니다. 카카오맵 키는 브라우저 노출을 전제로 설계된 키이므로 프론트엔드 환경변수로 관리합니다.
+> ⚠️ OpenAI, Gemini, 네이버, 국토부 키는 절대 프론트엔드(`VITE_` 접두사)에 넣지 않고 Supabase Secrets로만 관리합니다. 카카오맵 키는 브라우저 노출을 전제로 설계된 키이므로 프론트엔드 환경변수로 관리합니다.
 > ⚠️ `SUPABASE_SERVICE_ROLE_KEY`는 RLS를 우회하는 최고 권한 키이므로, GitHub Actions Secrets에만 등록하고 절대 워크플로우 파일이나 커밋에 값 자체를 남기지 않습니다.
 
 ---
