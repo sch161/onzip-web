@@ -87,7 +87,7 @@ export default function Login() {
               id="email"
               type="email"
               label="이메일"
-              placeholder="example@zipup.com"
+              placeholder="example@onzip.com"
               autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}

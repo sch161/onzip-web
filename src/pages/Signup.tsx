@@ -132,7 +132,7 @@ export default function Signup() {
               id="signup-email"
               type="email"
               label="이메일"
-              placeholder="example@zipup.com"
+              placeholder="example@onzip.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
